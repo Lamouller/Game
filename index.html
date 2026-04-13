@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
+<title>Birdlife — Simulation d'oiseaux</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div id="app">
+  <canvas id="c"></canvas>
+
+  <div id="hud">
+    <div class="top">
+      <div class="stat" title="Énergie totale collectée par les oiseaux">
+        <span class="icon">◈</span>
+        <span id="xp">0</span>
+        <small>essence</small>
+      </div>
+      <div class="stat" title="Oiseaux vivants">
+        <span class="icon">✦</span>
+        <span id="birdCount">0</span>
+        <small>oiseaux</small>
+      </div>
+      <div class="stat" title="Niveau du monde">
+        <span class="icon">▲</span>
+        <span id="worldLvl">1</span>
+        <small>monde</small>
+      </div>
+      <button id="regenBtn" title="Régénérer un nouveau monde procédural">Nouveau monde</button>
+      <button id="resetBtn" title="Tout réinitialiser">Reset</button>
+    </div>
+
+    <div class="bottom">
+      <div id="foodbar"></div>
+      <div id="tip">Clique sur le sol pour déposer de la nourriture. Les oiseaux viendront manger et évolueront.</div>
+    </div>
+  </div>
+
+  <div id="unlock" class="toast hidden"></div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+<script type="module" src="game.js"></script>
+</body>
+</html>
