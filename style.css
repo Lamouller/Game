@@ -50,6 +50,18 @@ body {
   #hud .top .stat {
     padding: 6px 9px;
   }
+  /* Bottom bar (foodbar + tip) lifted ABOVE the joysticks + touch buttons
+     so nothing overlaps at the bottom of the screen. */
+  #hud .bottom {
+    bottom: 230px !important;
+  }
+  #tip { display: none; }
+  /* Compact foodbar slots */
+  .food {
+    width: 44px !important;
+    height: 44px !important;
+  }
+  .food .name { font-size: 8px !important; }
 }
 #hud .bottom {
   position: absolute;
