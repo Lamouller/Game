@@ -1529,14 +1529,18 @@ class Bird {
   }
 }
 
-// Spawn birds in a close ring around the player so they're immediately visible
+// Spawn birds in a close ring around the player so they're immediately visible.
+// Range tuned so the birds land between the player head and 12 units above
+// the ground — always within the camera frustum at default pitch.
 function spawnBird() {
   if (birds.length >= MAX_BIRDS) return;
   const angle = Math.random() * Math.PI * 2;
-  const r = 12 + Math.random() * 28; // much closer than before (was 40..130)
+  const r = 8 + Math.random() * 20;
   const x = player.pos.x + Math.cos(angle) * r;
   const z = player.pos.z + Math.sin(angle) * r;
-  const h = terrainHeight(x, z, save.worldSeed, worldLevel()) + 7 + Math.random() * 8;
+  const ground = terrainHeight(x, z, save.worldSeed, worldLevel());
+  // Spawn between player head height and +12 above it so they're in view
+  const h = Math.max(ground + 3, player.pos.y + 2 + Math.random() * 10);
   birds.push(new Bird(new THREE.Vector3(x, h, z)));
 }
 
@@ -2619,7 +2623,7 @@ buildFoodbar();
 updateHUD();
 
 // Seed a few starter birds
-for (let i = 0; i < 14; i++) spawnBird();
+for (let i = 0; i < 20; i++) spawnBird();
 
 let lastT = performance.now();
 let hudAcc = 0;
