@@ -843,7 +843,9 @@ const player = {
   yaw: 0,
   pitch: 0.15,
   onGround: false,
+  swimming: false,
   group: new THREE.Group(),
+  axeSwing: 0, // seconds remaining on the chop animation, counts down to 0
 };
 
 // Virtual input (joystick / touch buttons). Shared with desktop keys.
@@ -899,25 +901,49 @@ function buildLumberjack(group) {
   // negative z.
   // Higher subdivisions so every curve is smooth.
 
-  // --- Legs — capsules, high-res ---
-  const legGeo  = new THREE.CapsuleGeometry(0.15, 0.6, 10, 20);
-  const bootGeo = new THREE.IcosahedronGeometry(0.22, 2);
+  // --- Legs — full skeletal chain hip → knee → ankle → foot ---
+  // Upper leg (thigh), lower leg (shin) and boot are nested groups so we
+  // can bend the knee and rotate the ankle during the walk animation.
+  const thighGeo = new THREE.CapsuleGeometry(0.14, 0.24, 10, 20);
+  const shinGeo  = new THREE.CapsuleGeometry(0.12, 0.22, 10, 20);
+  const bootGeo  = new THREE.IcosahedronGeometry(0.22, 2);
 
   function buildLeg(x) {
+    // Hip pivot — top of the thigh, attached to the pelvis
     const hip = new THREE.Group();
     hip.position.set(x, 0.85, 0);
-    const leg = new THREE.Mesh(legGeo, pantsMat);
-    leg.position.y = -0.4;
-    hip.add(leg);
-    const boot = new THREE.Mesh(bootGeo, bootsMat);
-    boot.scale.set(1.18, 0.7, 1.6);
-    boot.position.set(0, -0.85 + 0.13, -0.08); // toes toward -z (front)
-    hip.add(boot);
-    return hip;
+
+    // Thigh mesh centered below the hip
+    const thigh = new THREE.Mesh(thighGeo, pantsMat);
+    thigh.position.y = -0.175;
+    hip.add(thigh);
+
+    // Knee pivot at the bottom of the thigh
+    const knee = new THREE.Group();
+    knee.position.y = -0.35;
+    hip.add(knee);
+
+    // Shin mesh centered below the knee
+    const shin = new THREE.Mesh(shinGeo, pantsMat);
+    shin.position.y = -0.175;
+    knee.add(shin);
+
+    // Ankle pivot at the bottom of the shin
+    const ankle = new THREE.Group();
+    ankle.position.y = -0.35;
+    knee.add(ankle);
+
+    // Foot (boot) mesh, slightly forward of the ankle
+    const foot = new THREE.Mesh(bootGeo, bootsMat);
+    foot.scale.set(1.2, 0.7, 1.65);
+    foot.position.set(0, 0, -0.06);
+    ankle.add(foot);
+
+    return { hip, knee, ankle, foot };
   }
-  const hipL = buildLeg(-0.14);
-  const hipR = buildLeg( 0.14);
-  group.add(hipL, hipR);
+  const legL = buildLeg(-0.14);
+  const legR = buildLeg( 0.14);
+  group.add(legL.hip, legR.hip);
 
   // --- Torso — capsule, high-res ---
   const torsoGeo = new THREE.CapsuleGeometry(0.34, 0.65, 12, 24);
@@ -947,30 +973,57 @@ function buildLumberjack(group) {
   collar.position.y = 1.62;
   group.add(collar);
 
-  // --- Arms (shoulder pivots) ---
-  const armGeo  = new THREE.CapsuleGeometry(0.11, 0.62, 10, 20);
-  const handGeo = new THREE.SphereGeometry(0.13, 20, 14);
+  // --- Arms — full skeletal chain shoulder → elbow → wrist → hand ---
+  const upperArmGeo = new THREE.CapsuleGeometry(0.11, 0.22, 10, 20);
+  const forearmGeo  = new THREE.CapsuleGeometry(0.09, 0.2, 10, 20);
+  const handGeo     = new THREE.SphereGeometry(0.12, 20, 14);
 
   function buildArm(x, zTilt) {
+    // Shoulder pivot
     const shoulder = new THREE.Group();
     shoulder.position.set(x, 1.55, 0);
     shoulder.rotation.z = zTilt;
-    const arm = new THREE.Mesh(armGeo, shirtMat);
-    arm.position.y = -0.4;
-    shoulder.add(arm);
-    const hand = new THREE.Mesh(handGeo, skinMat);
-    hand.position.y = -0.86;
-    shoulder.add(hand);
-    return shoulder;
-  }
-  const shoulderL = buildArm(-0.40,  0.22);
-  const shoulderR = buildArm( 0.40, -0.22);
-  group.add(shoulderL, shoulderR);
 
-  // --- Head (pivot group so it can nod / shake with walk animation) ---
+    // Upper arm centered below the shoulder
+    const upperArm = new THREE.Mesh(upperArmGeo, shirtMat);
+    upperArm.position.y = -0.16;
+    shoulder.add(upperArm);
+
+    // Elbow pivot at the bottom of the upper arm
+    const elbow = new THREE.Group();
+    elbow.position.y = -0.33;
+    shoulder.add(elbow);
+
+    // Forearm centered below the elbow
+    const forearm = new THREE.Mesh(forearmGeo, shirtMat);
+    forearm.position.y = -0.15;
+    elbow.add(forearm);
+
+    // Wrist pivot at the bottom of the forearm
+    const wrist = new THREE.Group();
+    wrist.position.y = -0.32;
+    elbow.add(wrist);
+
+    // Hand
+    const hand = new THREE.Mesh(handGeo, skinMat);
+    hand.position.y = -0.06;
+    wrist.add(hand);
+
+    return { shoulder, elbow, wrist, hand };
+  }
+  const armL = buildArm(-0.40,  0.22);
+  const armR = buildArm( 0.40, -0.22);
+  group.add(armL.shoulder, armR.shoulder);
+
+  // --- Neck + head (neck pivot at the collar, head pivot stacked on top) ---
+  // The neck lives just above the collar; the headPivot sits on the neck so
+  // we can animate them independently (neck for spine motion, head for nods).
+  const neck = new THREE.Group();
+  neck.position.y = 1.58;
+  group.add(neck);
   const headPivot = new THREE.Group();
-  headPivot.position.y = 1.72;
-  group.add(headPivot);
+  headPivot.position.y = 0.14; // world y ≈ 1.72
+  neck.add(headPivot);
   const head = new THREE.Mesh(
     new THREE.SphereGeometry(0.28, 32, 26),
     skinMat,
@@ -1130,7 +1183,7 @@ function buildLumberjack(group) {
 
   group.add(axeGroup);
 
-  return { hipL, hipR, shoulderL, shoulderR, torso, headPivot };
+  return { legL, legR, armL, armR, torso, neck, headPivot };
 }
 player.parts = buildLumberjack(player.group);
 player.walkPhase = 0;
@@ -1186,27 +1239,48 @@ function updatePlayer(dt) {
   player.vel.x = moveDir.x * speed;
   player.vel.z = moveDir.z * speed;
 
-  // Gravity
-  player.vel.y -= GRAVITY * dt;
+  // Detect if the player is in water — terrain below water level at their
+  // current (x, z). When swimming, gravity is dampened and movement is
+  // slower but still possible in all 4 directions plus vertical via Space/Jump.
+  const groundH = terrainHeight(player.pos.x, player.pos.z, seed, lvl);
+  const waterSurface = WATER_LEVEL - 0.2;
+  const playerSwimming = groundH < waterSurface && player.pos.y - PLAYER_HEIGHT * 0.5 < waterSurface + 0.3;
+  player.swimming = playerSwimming;
 
-  // Jump
-  if (player.onGround && (keys['Space'] || keys['KeyJ'] || touchInput.jump)) {
-    player.vel.y = PLAYER_JUMP;
-    player.onGround = false;
+  if (playerSwimming) {
+    // Water resistance + buoyancy (player floats up toward surface)
+    player.vel.x *= 0.85;
+    player.vel.z *= 0.85;
+    // Gentle buoyancy pulling player's head toward surface
+    const targetY = waterSurface + PLAYER_HEIGHT * 0.5 - 0.4;
+    player.vel.y += (targetY - player.pos.y) * 2.5 * dt * 10;
+    player.vel.y *= 0.85; // damping
+    // Space key = swim up (paddle)
+    if (keys['Space'] || keys['KeyJ'] || touchInput.jump) {
+      player.vel.y += 12 * dt;
+    }
+    touchInput.jump = false;
+  } else {
+    // Gravity
+    player.vel.y -= GRAVITY * dt;
+    // Jump
+    if (player.onGround && (keys['Space'] || keys['KeyJ'] || touchInput.jump)) {
+      player.vel.y = PLAYER_JUMP;
+      player.onGround = false;
+    }
+    touchInput.jump = false; // consume one-shot
   }
-  touchInput.jump = false; // consume one-shot
 
   player.pos.addScaledVector(player.vel, dt);
 
   // Ground collision via terrain heightfield
-  const groundH = terrainHeight(player.pos.x, player.pos.z, seed, lvl);
-  const footY = groundH + PLAYER_HEIGHT * 0.5;
+  const footY = Math.max(groundH, waterSurface - 0.8) + PLAYER_HEIGHT * 0.5;
   if (player.pos.y < footY) {
     player.pos.y = footY;
-    player.vel.y = 0;
-    player.onGround = true;
+    if (player.vel.y < 0) player.vel.y = 0;
+    player.onGround = !playerSwimming;
   } else {
-    player.onGround = player.pos.y - footY < 0.05;
+    player.onGround = !playerSwimming && (player.pos.y - footY < 0.05);
   }
 
   // No world bounds — the world streams in as the player moves
@@ -1216,7 +1290,7 @@ function updatePlayer(dt) {
   player.group.position.y -= PLAYER_HEIGHT * 0.5; // mesh is modelled with feet at 0
   player.group.rotation.y = player.yaw;
 
-  // --- Walk animation (hip + shoulder + torso + head) ---
+  // --- Walk animation: full skeletal chain ---
   const horizSpeed = Math.hypot(player.vel.x, player.vel.z);
   if (horizSpeed > 0.1) {
     player.walkPhase += dt * (5 + horizSpeed * 0.6);
@@ -1224,30 +1298,76 @@ function updatePlayer(dt) {
     player.walkPhase *= 0.88;
   }
   const moving = horizSpeed > 0.1 ? 1 : 0;
-  // Amplified swings for more visible motion
-  const swing  = Math.sin(player.walkPhase) * 1.15 * moving;
-  const swing2 = Math.sin(player.walkPhase * 2) * 0.1 * moving;
-  // Legs swing opposite each other, with a small forward default
-  player.parts.hipL.rotation.x =  swing;
-  player.parts.hipR.rotation.x = -swing;
+  const sinP  = Math.sin(player.walkPhase);
+  const sinP2 = Math.sin(player.walkPhase * 2);
+  // Hip (thigh) swing
+  const hipSwing = sinP * 1.15 * moving;
+  // Knee bends when the leg is behind (foot lifting up)
+  const kneeBendL = Math.max(0,  sinP) * 1.3 * moving;
+  const kneeBendR = Math.max(0, -sinP) * 1.3 * moving;
+  // Ankle flex keeps the foot level-ish during knee bend
+  const ankleFlexL = -kneeBendL * 0.5;
+  const ankleFlexR = -kneeBendR * 0.5;
+
+  // Legs
+  player.parts.legL.hip.rotation.x   =  hipSwing;
+  player.parts.legR.hip.rotation.x   = -hipSwing;
+  player.parts.legL.knee.rotation.x  =  kneeBendL;
+  player.parts.legR.knee.rotation.x  =  kneeBendR;
+  player.parts.legL.ankle.rotation.x =  ankleFlexL;
+  player.parts.legR.ankle.rotation.x =  ankleFlexR;
+
   // Arms counter-swing with extra amplitude
-  player.parts.shoulderL.rotation.x = -swing * 1.1;
-  player.parts.shoulderR.rotation.x =  swing * 1.1;
-  // Arm splay — elbows out a bit on the down-swing so it reads as a walk
-  player.parts.shoulderL.rotation.z =  0.22 + Math.abs(swing) * 0.08;
-  player.parts.shoulderR.rotation.z = -0.22 - Math.abs(swing) * 0.08;
+  const shoulderSwing = -sinP * 1.0 * moving;
+  // Elbow bends when the arm is forward (natural walking motion)
+  const elbowBendL = Math.max(0, -sinP) * 0.8 * moving + 0.25;
+  const elbowBendR = Math.max(0,  sinP) * 0.8 * moving + 0.25;
+
+  player.parts.armL.shoulder.rotation.x =  shoulderSwing;
+  player.parts.armR.shoulder.rotation.x = -shoulderSwing;
+  // Keep the natural resting outward tilt and pulse it slightly
+  player.parts.armL.shoulder.rotation.z =  0.22 + Math.abs(sinP) * 0.05 * moving;
+  player.parts.armR.shoulder.rotation.z = -0.22 - Math.abs(sinP) * 0.05 * moving;
+  // Elbow bends
+  player.parts.armL.elbow.rotation.x = -elbowBendL;
+  player.parts.armR.elbow.rotation.x = -elbowBendR;
+  // Wrist follows the forearm with a small counter-rotation
+  player.parts.armL.wrist.rotation.x =  elbowBendL * 0.25;
+  player.parts.armR.wrist.rotation.x =  elbowBendR * 0.25;
+
   // Torso counter-rotates around Y (hips go left → shoulders go right)
-  player.parts.torso.rotation.y = -swing * 0.25;
-  // Small torso roll (side to side) + lean forward slightly when sprinting
-  player.parts.torso.rotation.z = swing2;
+  player.parts.torso.rotation.y = -sinP * 0.25 * moving;
+  player.parts.torso.rotation.z = sinP2 * 0.1 * moving;
   player.parts.torso.rotation.x = -horizSpeed * 0.015;
-  // Head bobs slightly, counter-rotates for balance
-  if (player.parts.headPivot) {
-    player.parts.headPivot.rotation.y = swing * 0.12;
-    player.parts.headPivot.position.y = 1.72 + Math.abs(Math.sin(player.walkPhase * 2)) * 0.03 * moving;
-  }
+  // Neck follows the torso counter-rotation but less
+  player.parts.neck.rotation.y = sinP * 0.18 * moving;
+  player.parts.neck.rotation.x =  horizSpeed * 0.01;
+  // Head nods gently with the gait
+  player.parts.headPivot.rotation.x = -Math.abs(sinP2) * 0.05 * moving;
   // Whole-body bob up/down (2× phase since each step contributes a bob)
-  player.group.position.y += Math.abs(Math.sin(player.walkPhase * 2)) * 0.06 * moving;
+  player.group.position.y += Math.abs(sinP2) * 0.06 * moving;
+
+  // --- Axe swing override for gathering ---
+  // While axeSwing is positive, the right arm is driven manually through a
+  // quick chop arc instead of following the walk cycle.
+  if (player.axeSwing > 0) {
+    player.axeSwing = Math.max(0, player.axeSwing - dt);
+    // t goes 0 → 1 over 0.55 s
+    const t = 1 - player.axeSwing / 0.55;
+    // Raise then slam: shoulder rotates from +0.4 rad (back) to -1.8 rad (forward-down)
+    // Use a smoothstep-like curve so it's fast at the apex
+    const chop = t < 0.35
+      ? (t / 0.35) * 0.8        // wind-up: arm back + up
+      : 1 - ((t - 0.35) / 0.65); // slam: forward-down
+    const shoulderX = 0.6 - chop * 2.4;
+    const elbowX    = -0.4 - chop * 1.2;
+    player.parts.armR.shoulder.rotation.x = shoulderX;
+    player.parts.armR.shoulder.rotation.z = -0.15;
+    player.parts.armR.elbow.rotation.x = elbowX;
+    player.parts.armR.wrist.rotation.x = 0;
+    // Torso leans slightly forward during the swing
+    player.parts.torso.rotation.x += -chop * 0.15;
+  }
 
   // Follow camera — orbital around player using yaw/pitch
   const cp = Math.cos(player.pitch), sp = Math.sin(player.pitch);
@@ -1674,28 +1794,34 @@ function updateBirds(dt) {
       if (tmpCoh.lengthSq() > 0) tmpCoh.setLength(MAX_SPEED).sub(b.vel).clampLength(0, 4);
     }
 
-    // Food attraction: pick best food by tier / distance
+    // Food attraction: pick best food by tier / distance (wider radius now)
     let best = null, bestScore = -Infinity;
     for (const f of foods) {
       const d = b.pos.distanceTo(f.pos);
-      if (d > 80) continue;
-      const score = (f.energy + 1) * 10 - d;
+      if (d > 160) continue;
+      const score = (f.energy + 1) * 12 - d;
       if (score > bestScore) { bestScore = score; best = f; }
     }
     tmpFood.set(0, 0, 0);
     if (best) {
       tmpFood.subVectors(best.pos, b.pos);
       if (tmpFood.lengthSq() > 0) {
-        tmpFood.setLength(MAX_SPEED).sub(b.vel).clampLength(0, 12);
+        tmpFood.setLength(MAX_SPEED).sub(b.vel).clampLength(0, 18);
       }
     }
 
-    // Ground / ceiling avoidance
+    // Ground / ceiling avoidance — lowered when a food target is near enough,
+    // otherwise the bird hovers ~5 units above the food and never reaches it.
     const groundH = terrainHeight(b.pos.x, b.pos.z, seed, lvl);
-    const minY = groundH + 4;
+    // Default min altitude is 4 above ground; when diving toward food, allow
+    // a much lower approach so the bird can reach ground-level seeds.
+    const foodDiveMode = !!best && b.pos.distanceTo(best.pos) < 18;
+    const minY = foodDiveMode ? groundH + 0.5 : groundH + 4;
     const maxY = 70;
     tmpGround.set(0, 0, 0);
-    if (b.pos.y < minY + 5) tmpGround.y += (minY + 5 - b.pos.y) * 3;
+    if (b.pos.y < minY + (foodDiveMode ? 1 : 5)) {
+      tmpGround.y += (minY + (foodDiveMode ? 1 : 5) - b.pos.y) * (foodDiveMode ? 1 : 3);
+    }
     if (b.pos.y > maxY)     tmpGround.y -= (b.pos.y - maxY) * 3;
 
     // Soft bounds relative to the player (keep birds in a bubble around them
@@ -1735,14 +1861,17 @@ function updateBirds(dt) {
     b.energy -= dt * 0.6;
 
     // Eat food if close enough
-    if (best && b.pos.distanceTo(best.pos) < 1.6) {
+    if (best && b.pos.distanceTo(best.pos) < 2.2) {
       b.energy += best.energy * 10;
       gainXp(best.energy);
       questEvent('feed');
       recordSpecies(b);
-      // --- Pollination: the bird is now "charged" with this tier's seed ---
+      // --- Pollination: instantly grow a plant where the food was ---
+      // Much more visible than the old "carry a seed and drop it later"
+      // system, which relied on bird movement that the player often
+      // didn't notice.
+      plantAtPosition(best.pos.x, best.pos.z, best.tier);
       b.chargeTier = best.tier;
-      b.chargeLeft = 6 + best.tier * 2; // higher tier = carries the seed longer
       // remove food
       const idx = foods.indexOf(best);
       if (idx !== -1) {
@@ -1809,18 +1938,16 @@ const plantKinds = [
   { name: 'mythique', geos: [seedMythicGeo], colors: [0xb68cff], emissive: 0x30106a, scale: 1.5 },
 ];
 
-function plantSeedBelowBird(b) {
+// Plant a seed at an arbitrary world position (x, z) for the given tier.
+// Used by the instant-plant-on-eat flow so growing plants appear at the
+// exact spot where a bird ate food, not a few seconds later elsewhere.
+function plantAtPosition(x, z, tier) {
   if (plants.length >= MAX_PLANTS) return;
-  const kind = plantKinds[Math.min(b.chargeTier, plantKinds.length - 1)];
+  const kind = plantKinds[Math.min(tier, plantKinds.length - 1)];
   const seed = save.worldSeed;
   const lvl = worldLevel();
-  // Plant is dropped slightly forward of the bird's velocity, on the ground
-  const dir = new THREE.Vector3().copy(b.vel).normalize();
-  const x = b.pos.x + dir.x * 2;
-  const z = b.pos.z + dir.z * 2;
   const y = terrainHeight(x, z, seed, lvl);
-  // Don't bother seeding in water / deep sand
-  if (y < -1) return;
+  if (y < -1) return; // skip underwater seeds
 
   const group = new THREE.Group();
   for (let i = 0; i < kind.geos.length; i++) {
@@ -1838,13 +1965,17 @@ function plantSeedBelowBird(b) {
   plants.push({
     mesh: group,
     grow: 0,
-    target: kind.scale,
-    tier: b.chargeTier,
+    target: kind.scale * 1.3, // slightly bigger for visibility
+    tier,
     pos: new THREE.Vector3(x, y, z),
   });
-  // Little sparkle XP reward to the player for having made it grow
-  gainXp(1 + b.chargeTier);
-  // Show a floating "+1 🌱" type indicator at the plant position (optional)
+  gainXp(1 + tier);
+  spawnFloatingNumber('🌱');
+}
+
+// Keep the old name around in case it's referenced elsewhere
+function plantSeedBelowBird(b) {
+  plantAtPosition(b.pos.x, b.pos.z, b.chargeTier || 0);
 }
 
 function updatePlants(dt) {
@@ -1853,8 +1984,10 @@ function updatePlants(dt) {
   for (let i = plants.length - 1; i >= 0; i--) {
     const p = plants[i];
     if (p.grow < 1) {
-      p.grow = Math.min(1, p.grow + dt * 0.45);
-      p.mesh.scale.setScalar(Math.max(0.001, p.grow * p.target));
+      p.grow = Math.min(1, p.grow + dt * 1.1); // grows to full size in ~1s
+      // Ease-out for a pop effect
+      const eased = 1 - Math.pow(1 - p.grow, 2);
+      p.mesh.scale.setScalar(Math.max(0.001, eased * p.target));
     }
     // Cull distant plants to keep memory bounded
     const dx = p.pos.x - px, dz = p.pos.z - pz;
@@ -1890,6 +2023,10 @@ const GATHER_MAP = [
 ];
 
 function tryGatherNearbyPlant() {
+  // Trigger the chop animation even if nothing is close so the motion
+  // still feels natural when the player mistimes a gather.
+  player.axeSwing = 0.55;
+
   let best = null, bestDist = 3.5;
   let bestIdx = -1;
   for (let i = 0; i < plants.length; i++) {
@@ -2509,7 +2646,7 @@ $musicBtn?.addEventListener('click', () => {
       musicPlaying = true;
       $musicBtn.classList.add('active');
       $musicBtn.textContent = '♫';
-      showToast('Radio Meuh — en direct 🎸');
+      showToast('SomaFM Metal Detector — en direct 🎸');
     }).catch(err => {
       showToast('Musique indisponible — <i>' + (err.message || 'erreur') + '</i>');
     });
