@@ -100,8 +100,12 @@ window.addEventListener('keydown', e => {
   if (e.code === 'Escape') {
     document.exitPointerLock?.();
     if (typeof closeDialog === 'function') closeDialog();
+    if (typeof closeBigPanel === 'function') closeBigPanel();
   }
   if (e.code === 'KeyE' && typeof tryInteract === 'function') tryInteract();
+  if (e.code === 'KeyF' && typeof tryGatherNearbyPlant === 'function') tryGatherNearbyPlant();
+  if (e.code === 'KeyI' && typeof toggleInventoryPanel === 'function') toggleInventoryPanel();
+  if (e.code === 'KeyM' && typeof toggleWorldMapPanel === 'function') toggleWorldMapPanel();
 });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
 window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
@@ -1306,6 +1310,10 @@ function getQuestTemplate(id) {
 // Active quest state (kept in memory only — persisted on save)
 if (!save.activeQuests) save.activeQuests = [];
 if (!save.completedQuests) save.completedQuests = [];
+// Inventory of gathered resources
+if (!save.inventory) save.inventory = { bois: 0, herbe: 0, baie: 0, nectar: 0, essence: 0, plume: 0 };
+// POIs visited by the player (map: "vgx,vgz" -> { x, z, visitedAt })
+if (!save.discoveredVillages) save.discoveredVillages = {};
 
 function acceptQuest(tmpl, fromNpc) {
   if (save.activeQuests.some(q => q.id === tmpl.id)) return false;
@@ -1742,6 +1750,40 @@ function clearAllPlants() {
   plants.length = 0;
 }
 
+// --- Gather nearest plant within range ---
+// Maps plant tier to the resource added to the inventory.
+const GATHER_MAP = [
+  { key: 'herbe',   label: 'herbe' },
+  { key: 'baie',    label: 'baie' },
+  { key: 'bois',    label: 'bois' },
+  { key: 'nectar',  label: 'nectar' },
+  { key: 'essence', label: 'essence' },
+];
+
+function tryGatherNearbyPlant() {
+  let best = null, bestDist = 3.5;
+  let bestIdx = -1;
+  for (let i = 0; i < plants.length; i++) {
+    const p = plants[i];
+    if (p.grow < 0.4) continue; // not mature enough yet
+    const dx = p.pos.x - player.pos.x;
+    const dz = p.pos.z - player.pos.z;
+    const d = Math.hypot(dx, dz);
+    if (d < bestDist) { bestDist = d; best = p; bestIdx = i; }
+  }
+  if (!best) return false;
+  const map = GATHER_MAP[Math.min(best.tier, GATHER_MAP.length - 1)];
+  save.inventory[map.key] = (save.inventory[map.key] || 0) + 1;
+  persist();
+  spawnFloatingNumber('+1 ' + map.label);
+  // Remove the plant with a small pop
+  scene.remove(best.mesh);
+  best.mesh.traverse(obj => { if (obj.material) obj.material.dispose(); });
+  plants.splice(bestIdx, 1);
+  updateInventoryPanel();
+  return true;
+}
+
 function renderBirds() {
   birdMesh.count = birds.length;
   for (let i = 0; i < birds.length; i++) {
@@ -1881,6 +1923,144 @@ function updateInteraction() {
       $interactPrompt.innerHTML = `Parler à <b>${best.userData.name}</b> — <span class="key">E</span>`;
     } else {
       $interactPrompt.classList.add('hidden');
+    }
+  }
+}
+
+// --- Inventory panel -----------------------------------------------------
+const INV_LAYOUT = [
+  { key: 'bois',    icon: '🪵', name: 'Bois' },
+  { key: 'herbe',   icon: '🌿', name: 'Herbe' },
+  { key: 'baie',    icon: '🫐', name: 'Baie' },
+  { key: 'nectar',  icon: '🍯', name: 'Nectar' },
+  { key: 'essence', icon: '✨', name: 'Essence' },
+  { key: 'plume',   icon: '🪶', name: 'Plume' },
+];
+function updateInventoryPanel() {
+  const grid = document.getElementById('inventoryGrid');
+  if (!grid) return;
+  grid.innerHTML = INV_LAYOUT.map(slot => `
+    <div class="invSlot">
+      <div class="invIcon">${slot.icon}</div>
+      <div class="invName">${slot.name}</div>
+      <div class="invCount">${save.inventory[slot.key] || 0}</div>
+    </div>
+  `).join('');
+}
+let openPanelId = null;
+function openBigPanel(id) {
+  // Close any other open panel
+  if (openPanelId && openPanelId !== id) closeBigPanel();
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.remove('hidden');
+  openPanelId = id;
+  if (id === 'inventoryPanel') updateInventoryPanel();
+  if (id === 'worldMapPanel') drawWorldMap();
+}
+function closeBigPanel() {
+  if (!openPanelId) return;
+  const el = document.getElementById(openPanelId);
+  if (el) el.classList.add('hidden');
+  openPanelId = null;
+}
+function toggleInventoryPanel() {
+  if (openPanelId === 'inventoryPanel') closeBigPanel();
+  else openBigPanel('inventoryPanel');
+}
+function toggleWorldMapPanel() {
+  if (openPanelId === 'worldMapPanel') closeBigPanel();
+  else openBigPanel('worldMapPanel');
+}
+
+// Close buttons inside big panels
+document.addEventListener('click', e => {
+  const t = e.target;
+  if (t && t.matches?.('.dialog-close-btn')) {
+    closeBigPanel();
+  }
+});
+
+// --- World map drawing ---------------------------------------------------
+const WORLD_MAP_RANGE = 900; // world units across the full canvas
+function drawWorldMap() {
+  const canvas = document.getElementById('worldMapCanvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
+  // Background gradient for depth
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#1c2838');
+  g.addColorStop(1, '#0c1626');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+
+  // Low-res terrain height shading sampled around the player
+  const step = 10;
+  for (let y = 0; y < H; y += step) {
+    for (let x = 0; x < W; x += step) {
+      const wx = player.pos.x + ((x - W / 2) / (W / 2)) * WORLD_MAP_RANGE;
+      const wz = player.pos.z + ((y - H / 2) / (H / 2)) * WORLD_MAP_RANGE;
+      const b = biomeAt(wx, wz, save.worldSeed);
+      const h = terrainHeight(wx, wz, save.worldSeed, worldLevel());
+      // Base biome fog color, darkened by relief
+      const bc = new THREE.Color(b.fog);
+      const k = 0.35 + Math.max(-0.25, Math.min(0.25, h / 40)) * 0.8;
+      ctx.fillStyle = `rgb(${(bc.r*255*k)|0},${(bc.g*255*k)|0},${(bc.b*255*k)|0})`;
+      ctx.fillRect(x, y, step, step);
+    }
+  }
+
+  // Discovered villages (gold dots)
+  ctx.fillStyle = '#ffd23a';
+  ctx.strokeStyle = '#ffe99a';
+  ctx.lineWidth = 1;
+  for (const key in save.discoveredVillages) {
+    const v = save.discoveredVillages[key];
+    const mx = W / 2 + ((v.x - player.pos.x) / WORLD_MAP_RANGE) * (W / 2);
+    const my = H / 2 + ((v.z - player.pos.z) / WORLD_MAP_RANGE) * (H / 2);
+    if (mx < 0 || mx > W || my < 0 || my > H) continue;
+    ctx.beginPath();
+    ctx.arc(mx, my, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  // Player marker
+  const pX = W / 2, pY = H / 2;
+  ctx.save();
+  ctx.translate(pX, pY);
+  ctx.rotate(player.yaw);
+  ctx.beginPath();
+  ctx.moveTo(0, -10);
+  ctx.lineTo(-6, 7);
+  ctx.lineTo(6, 7);
+  ctx.closePath();
+  ctx.fillStyle = '#ff9f40';
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 2;
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+
+  // Cardinal N label
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  ctx.font = 'bold 16px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('N', W / 2, 20);
+}
+
+// Mark a village as discovered when the player walks within range of it.
+function updateVillageDiscovery() {
+  for (const [key, v] of villages) {
+    if (!v) continue;
+    if (save.discoveredVillages[key]) continue;
+    const d = Math.hypot(v.worldX - player.pos.x, v.worldZ - player.pos.z);
+    if (d < 14) {
+      save.discoveredVillages[key] = { x: v.worldX, z: v.worldZ, visitedAt: Date.now() };
+      persist();
+      showToast('Village découvert ! Ouvre la carte avec <span class="key">M</span>');
     }
   }
 }
@@ -2061,6 +2241,8 @@ $reset.addEventListener('click', () => {
   save = defaultSave();
   save.activeQuests = [];
   save.completedQuests = [];
+  save.inventory = { bois: 0, herbe: 0, baie: 0, nectar: 0, essence: 0, plume: 0 };
+  save.discoveredVillages = {};
   persist();
   birds.length = 0;
   for (const f of foods) { scene.remove(f.mesh); f.mesh.material.dispose(); }
@@ -2250,6 +2432,10 @@ btnJump?.addEventListener('pointerdown', e => {
   e.preventDefault();
   touchInput.jump = true;
 });
+document.getElementById('btnGather')?.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  tryGatherNearbyPlant();
+});
 
 // =============================================================================
 // Init + game loop
@@ -2286,6 +2472,7 @@ function loop() {
   try { renderBirds(); }          catch (e) { logOnce('renderBirds', e); }
   try { updateInteraction(); }    catch (e) { logOnce('updateInteraction', e); }
   try { updateQuestDistances(); } catch (e) { logOnce('updateQuestDistances', e); }
+  try { updateVillageDiscovery(); } catch (e) { logOnce('updateVillageDiscovery', e); }
 
   // Occasional spawn if population is low and xp allows
   if (birds.length < Math.min(12 + worldLevel() * 8, MAX_BIRDS)) {

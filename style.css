@@ -381,6 +381,96 @@ body.touch .desktop-only { display: none; }
 }
 #dialog button.primary:hover { background: linear-gradient(180deg, #4a8adc, #2f5ea4); }
 
+/* Big overlay panels (inventory, world map) share the same modal shell */
+.bigPanel {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5, 10, 18, 0.7);
+  backdrop-filter: blur(3px);
+  z-index: 11;
+  pointer-events: auto;
+}
+.bigPanel.hidden { display: none; }
+.bigPanel .panel {
+  background: linear-gradient(180deg, rgba(18, 28, 42, 0.96), rgba(10, 18, 28, 0.96));
+  border: 2px solid rgba(140, 200, 255, 0.35);
+  border-radius: 14px;
+  padding: 18px 22px;
+  max-width: 90vw;
+}
+.bigPanel .dialog-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(140, 200, 255, 0.15);
+  padding-bottom: 10px;
+  margin-bottom: 14px;
+  font-size: 18px;
+  font-weight: 700;
+  color: #ffd23a;
+}
+.bigPanel .dialog-close-btn {
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 26px;
+  cursor: pointer;
+  padding: 0 8px;
+}
+.bigPanel .panel-hint {
+  margin-top: 14px;
+  font-size: 12px;
+  opacity: 0.65;
+  text-align: center;
+}
+.bigPanel .key {
+  display: inline-block;
+  background: rgba(120, 200, 255, 0.25);
+  border: 1px solid rgba(120, 200, 255, 0.5);
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin: 0 3px;
+  font-weight: 700;
+  font-size: 11px;
+}
+
+/* Inventory grid */
+#inventoryGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  min-width: 360px;
+}
+.invSlot {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(140, 200, 255, 0.2);
+  border-radius: 10px;
+  padding: 14px 8px 10px 8px;
+  text-align: center;
+}
+.invIcon { font-size: 30px; line-height: 1; margin-bottom: 4px; }
+.invName { font-size: 11px; opacity: 0.7; letter-spacing: 0.04em; text-transform: uppercase; }
+.invCount {
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #ffe99a;
+  margin-top: 4px;
+}
+
+/* World map canvas */
+#worldMapCanvas {
+  display: block;
+  border: 1px solid rgba(140, 200, 255, 0.3);
+  border-radius: 10px;
+  max-width: min(540px, 80vw);
+  height: auto;
+  background: #0b1422;
+}
+
 /* Floating XP numbers */
 .floatXp {
   position: fixed;
