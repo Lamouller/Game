@@ -388,17 +388,24 @@ function buildLumberjack(group) {
   const berryMat   = new THREE.MeshLambertMaterial({ color: 0xe03a58, emissive: 0x3a0612, emissiveIntensity: 0.4 });
   const capMat     = new THREE.MeshLambertMaterial({ color: 0xa31414 });
 
-  // Legs
-  const legGeo = new THREE.CylinderGeometry(0.12, 0.12, 0.75, 6);
-  const legL = new THREE.Mesh(legGeo, pantsMat); legL.position.set(-0.13, 0.38, 0);
-  const legR = new THREE.Mesh(legGeo, pantsMat); legR.position.set( 0.13, 0.38, 0);
-  group.add(legL, legR);
-
-  // Boots
+  // --- Legs as hip pivots so rotation.x swings the whole leg from the hip ---
+  const legGeo  = new THREE.CylinderGeometry(0.12, 0.12, 0.75, 6);
   const bootGeo = new THREE.BoxGeometry(0.28, 0.18, 0.34);
-  const bootL = new THREE.Mesh(bootGeo, bootsMat); bootL.position.set(-0.13, 0.09, 0.03);
-  const bootR = new THREE.Mesh(bootGeo, bootsMat); bootR.position.set( 0.13, 0.09, 0.03);
-  group.add(bootL, bootR);
+
+  function buildLeg(x) {
+    const hip = new THREE.Group();
+    hip.position.set(x, 0.755, 0); // hip height (top of leg)
+    const leg = new THREE.Mesh(legGeo, pantsMat);
+    leg.position.y = -0.375;       // cylinder center hangs below the hip
+    hip.add(leg);
+    const boot = new THREE.Mesh(bootGeo, bootsMat);
+    boot.position.set(0, -0.755 + 0.09, 0.03); // sole at y=0 relative to group
+    hip.add(boot);
+    return hip;
+  }
+  const hipL = buildLeg(-0.13);
+  const hipR = buildLeg( 0.13);
+  group.add(hipL, hipR);
 
   // Torso (shirt)
   const torso = new THREE.Mesh(
@@ -408,21 +415,25 @@ function buildLumberjack(group) {
   torso.position.y = 1.15;
   group.add(torso);
 
-  // Arms (shirt)
-  const armGeo = new THREE.CylinderGeometry(0.09, 0.09, 0.75, 6);
-  const armL = new THREE.Mesh(armGeo, shirtMat);
-  armL.position.set(-0.4, 1.12, 0);
-  armL.rotation.z = 0.25;
-  const armR = new THREE.Mesh(armGeo, shirtMat);
-  armR.position.set(0.4, 1.12, 0);
-  armR.rotation.z = -0.25;
-  group.add(armL, armR);
-
-  // Hands
+  // --- Arms as shoulder pivots ---
+  const armGeo  = new THREE.CylinderGeometry(0.09, 0.09, 0.75, 6);
   const handGeo = new THREE.SphereGeometry(0.1, 8, 6);
-  const handL = new THREE.Mesh(handGeo, skinMat); handL.position.set(-0.5, 0.76, 0);
-  const handR = new THREE.Mesh(handGeo, skinMat); handR.position.set( 0.5, 0.76, 0);
-  group.add(handL, handR);
+
+  function buildArm(x, zTilt) {
+    const shoulder = new THREE.Group();
+    shoulder.position.set(x, 1.48, 0); // shoulder position
+    shoulder.rotation.z = zTilt;       // slight outward tilt at rest
+    const arm = new THREE.Mesh(armGeo, shirtMat);
+    arm.position.y = -0.375;
+    shoulder.add(arm);
+    const hand = new THREE.Mesh(handGeo, skinMat);
+    hand.position.y = -0.78;
+    shoulder.add(hand);
+    return shoulder;
+  }
+  const shoulderL = buildArm(-0.35,  0.2);
+  const shoulderR = buildArm( 0.35, -0.2);
+  group.add(shoulderL, shoulderR);
 
   // Head
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 14, 10), skinMat);
@@ -490,8 +501,11 @@ function buildLumberjack(group) {
     b.position.set(x, y, z);
     group.add(b);
   }
+
+  return { hipL, hipR, shoulderL, shoulderR, torso };
 }
-buildLumberjack(player.group);
+player.parts = buildLumberjack(player.group);
+player.walkPhase = 0;
 scene.add(player.group);
 
 // Camera follow parameters
@@ -573,6 +587,28 @@ function updatePlayer(dt) {
   player.group.position.copy(player.pos);
   player.group.position.y -= PLAYER_HEIGHT * 0.5; // mesh is modelled with feet at 0
   player.group.rotation.y = player.yaw;
+
+  // --- Walk animation (hip + shoulder swings) ---
+  const horizSpeed = Math.hypot(player.vel.x, player.vel.z);
+  if (horizSpeed > 0.1) {
+    // Step frequency scales gently with speed so sprint looks faster
+    player.walkPhase += dt * (4 + horizSpeed * 0.5);
+  } else {
+    // Ease back to neutral when idle
+    player.walkPhase *= 0.9;
+  }
+  const moving = horizSpeed > 0.1 ? 1 : 0;
+  const swing  = Math.sin(player.walkPhase) * 0.7 * moving;
+  const swing2 = Math.sin(player.walkPhase * 2) * 0.06 * moving;
+  // Legs swing opposite each other
+  player.parts.hipL.rotation.x =  swing;
+  player.parts.hipR.rotation.x = -swing;
+  // Arms swing opposite to the matching leg
+  player.parts.shoulderL.rotation.x = -swing * 0.9;
+  player.parts.shoulderR.rotation.x =  swing * 0.9;
+  // Slight body bob + torso roll for liveliness
+  player.group.position.y += Math.abs(Math.sin(player.walkPhase)) * 0.04 * moving;
+  player.parts.torso.rotation.z = swing2;
 
   // Follow camera — orbital around player using yaw/pitch
   const cp = Math.cos(player.pitch), sp = Math.sin(player.pitch);
@@ -690,14 +726,14 @@ class Bird {
   }
 }
 
-const BIRD_SPAWN_R = 90; // spawn birds around the player in a ring
+// Spawn birds in a close ring around the player so they're immediately visible
 function spawnBird() {
   if (birds.length >= MAX_BIRDS) return;
   const angle = Math.random() * Math.PI * 2;
-  const r = 40 + Math.random() * BIRD_SPAWN_R;
+  const r = 12 + Math.random() * 28; // much closer than before (was 40..130)
   const x = player.pos.x + Math.cos(angle) * r;
   const z = player.pos.z + Math.sin(angle) * r;
-  const h = terrainHeight(x, z, save.worldSeed, worldLevel()) + 20 + Math.random() * 15;
+  const h = terrainHeight(x, z, save.worldSeed, worldLevel()) + 7 + Math.random() * 8;
   birds.push(new Bird(new THREE.Vector3(x, h, z)));
 }
 
@@ -1108,7 +1144,7 @@ buildFoodbar();
 updateHUD();
 
 // Seed a few starter birds
-for (let i = 0; i < 8; i++) spawnBird();
+for (let i = 0; i < 14; i++) spawnBird();
 
 let lastT = performance.now();
 let hudAcc = 0;
