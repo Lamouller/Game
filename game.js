@@ -106,6 +106,7 @@ window.addEventListener('keydown', e => {
   if (e.code === 'KeyF' && typeof tryGatherNearbyPlant === 'function') tryGatherNearbyPlant();
   if (e.code === 'KeyI' && typeof toggleInventoryPanel === 'function') toggleInventoryPanel();
   if (e.code === 'KeyM' && typeof toggleWorldMapPanel === 'function') toggleWorldMapPanel();
+  if (e.code === 'KeyA' && typeof toggleAtlasPanel === 'function') toggleAtlasPanel();
 });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
 window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
@@ -761,6 +762,7 @@ function buildVillage(worldX, worldZ, vgKey) {
     const ny = terrainHeight(nx, nz, seed, lvl);
     const name = NPC_NAMES[Math.floor(rand() * NPC_NAMES.length)];
     const npc = buildNPC(nx, ny, nz, name, rand);
+    npc.userData.vgKey = vgKey; // remember which village this NPC belongs to
     // First NPC in each village offers a quest
     if (i === 0) {
       npc.userData.hasQuest = true;
@@ -1299,6 +1301,63 @@ const QUEST_TEMPLATES = [
   },
 ];
 
+// =============================================================================
+// Species atlas
+// =============================================================================
+const SPECIES_PREFIXES = ['Cyan', 'Écarlate', 'Indigo', 'Ambre', 'Rubis', 'Jade', 'Pourpre', 'Safran', 'Cobalt', 'Turquoise', 'Magenta', 'Doré'];
+const SPECIES_SUFFIXES = [
+  'des Clairières', 'des Cimes', 'des Marais', 'chanteur',
+  'au long vol', 'crépusculaire', 'de l\'Aube', 'des Dunes',
+  'chuchoteur', 'des Prairies', 'givré', 'solitaire',
+];
+function generateSpeciesName(bin) {
+  const p = SPECIES_PREFIXES[bin % SPECIES_PREFIXES.length];
+  const s = SPECIES_SUFFIXES[(bin * 7 + 3) % SPECIES_SUFFIXES.length];
+  return p + ' ' + s;
+}
+function recordSpecies(bird) {
+  const hsl = { h: 0, s: 0, l: 0 };
+  bird.color.getHSL(hsl);
+  const bin = Math.floor(hsl.h * 12);
+  const id = 'sp_' + bin;
+  if (!save.species[id]) {
+    save.species[id] = {
+      hue: bin / 12,
+      count: 0,
+      firstSeen: Date.now(),
+      name: generateSpeciesName(bin),
+    };
+    showToast('Nouvelle espèce découverte : <b>' + save.species[id].name + '</b>');
+  }
+  save.species[id].count++;
+}
+
+// =============================================================================
+// Village reputation
+// =============================================================================
+const REP_GRADES = [
+  { min: 0,    name: 'Inconnu' },
+  { min: 100,  name: 'Ami' },
+  { min: 300,  name: 'Honoré' },
+  { min: 800,  name: 'Vénéré' },
+  { min: 2000, name: 'Exalté' },
+];
+function getRepGrade(rep) {
+  let best = REP_GRADES[0];
+  for (const g of REP_GRADES) if (rep >= g.min) best = g;
+  return best.name;
+}
+function addVillageRep(vgKey, amount) {
+  if (!vgKey) return;
+  if (!save.villageRep[vgKey]) save.villageRep[vgKey] = { rep: 0 };
+  const prevGrade = getRepGrade(save.villageRep[vgKey].rep);
+  save.villageRep[vgKey].rep += amount;
+  const nextGrade = getRepGrade(save.villageRep[vgKey].rep);
+  if (prevGrade !== nextGrade) {
+    showToast('Réputation village : <b>' + nextGrade + '</b>');
+  }
+}
+
 function pickQuestIdFor(vgKey) {
   const h = hash2(vgKey.charCodeAt(0) * 7, vgKey.length * 11, 31337);
   return QUEST_TEMPLATES[Math.floor(h * QUEST_TEMPLATES.length)].id;
@@ -1314,6 +1373,10 @@ if (!save.completedQuests) save.completedQuests = [];
 if (!save.inventory) save.inventory = { bois: 0, herbe: 0, baie: 0, nectar: 0, essence: 0, plume: 0 };
 // POIs visited by the player (map: "vgx,vgz" -> { x, z, visitedAt })
 if (!save.discoveredVillages) save.discoveredVillages = {};
+// Species atlas (id -> { hue, count, firstSeen, name })
+if (!save.species) save.species = {};
+// Per-village reputation (vgKey -> { rep })
+if (!save.villageRep) save.villageRep = {};
 
 function acceptQuest(tmpl, fromNpc) {
   if (save.activeQuests.some(q => q.id === tmpl.id)) return false;
@@ -1322,7 +1385,7 @@ function acceptQuest(tmpl, fromNpc) {
     progress: 0,
     startX: player.pos.x,
     startZ: player.pos.z,
-    giverVgKey: fromNpc.parent?.userData?.vgKey || null,
+    giverVgKey: fromNpc?.userData?.vgKey || null,
   });
   if (fromNpc) {
     fromNpc.userData.offered = true;
@@ -1356,6 +1419,8 @@ function turnInQuest(q) {
   save.completedQuests.push(q.id);
   save.activeQuests = save.activeQuests.filter(x => x !== q);
   if (tmpl.reward?.xp) gainXp(tmpl.reward.xp);
+  // Village reputation award
+  addVillageRep(q.giverVgKey, 25);
   showToast(`Quête complétée : <b>${tmpl.title}</b> (+${tmpl.reward?.xp || 0} ◈)`);
   persist();
   updateQuestTracker();
@@ -1611,6 +1676,7 @@ function updateBirds(dt) {
       b.energy += best.energy * 10;
       gainXp(best.energy);
       questEvent('feed');
+      recordSpecies(b);
       // --- Pollination: the bird is now "charged" with this tier's seed ---
       b.chargeTier = best.tier;
       b.chargeLeft = 6 + best.tier * 2; // higher tier = carries the seed longer
@@ -1861,7 +1927,11 @@ function openDialog(npc) {
   if (!$dialog) return;
   dialogNpc = npc;
   dialogMode = 'none';
-  $dialogName.textContent = npc.userData.name || 'Villageois';
+  // NPC name + current village reputation grade
+  const vgKey = npc.userData.vgKey;
+  const rep = (vgKey && save.villageRep[vgKey]?.rep) || 0;
+  const grade = getRepGrade(rep);
+  $dialogName.textContent = (npc.userData.name || 'Villageois') + '   —   ' + grade + ' (' + rep + ')';
 
   // First: any ready quest the player can turn in to ANY NPC in this village?
   const readyQuest = save.activeQuests.find(q => q.ready);
@@ -1957,6 +2027,7 @@ function openBigPanel(id) {
   openPanelId = id;
   if (id === 'inventoryPanel') updateInventoryPanel();
   if (id === 'worldMapPanel') drawWorldMap();
+  if (id === 'atlasPanel')    updateAtlasPanel();
 }
 function closeBigPanel() {
   if (!openPanelId) return;
@@ -1971,6 +2042,33 @@ function toggleInventoryPanel() {
 function toggleWorldMapPanel() {
   if (openPanelId === 'worldMapPanel') closeBigPanel();
   else openBigPanel('worldMapPanel');
+}
+function toggleAtlasPanel() {
+  if (openPanelId === 'atlasPanel') closeBigPanel();
+  else openBigPanel('atlasPanel');
+}
+
+function updateAtlasPanel() {
+  const grid = document.getElementById('atlasGrid');
+  if (!grid) return;
+  const ids = Object.keys(save.species);
+  if (ids.length === 0) {
+    grid.innerHTML = '<div class="empty-note">Aucune espèce encore enregistrée.</div>';
+    return;
+  }
+  ids.sort((a, b) => save.species[a].firstSeen - save.species[b].firstSeen);
+  grid.innerHTML = ids.map(id => {
+    const sp = save.species[id];
+    const c = new THREE.Color().setHSL(sp.hue, 0.55, 0.55);
+    const hex = '#' + c.getHexString();
+    return `
+      <div class="atlasCard">
+        <div class="atlasDot" style="background:${hex}; box-shadow:0 0 12px ${hex}"></div>
+        <div class="atlasName">${sp.name}</div>
+        <div class="atlasCount">× ${sp.count}</div>
+      </div>
+    `;
+  }).join('');
 }
 
 // Close buttons inside big panels
@@ -2243,6 +2341,8 @@ $reset.addEventListener('click', () => {
   save.completedQuests = [];
   save.inventory = { bois: 0, herbe: 0, baie: 0, nectar: 0, essence: 0, plume: 0 };
   save.discoveredVillages = {};
+  save.species = {};
+  save.villageRep = {};
   persist();
   birds.length = 0;
   for (const f of foods) { scene.remove(f.mesh); f.mesh.material.dispose(); }
@@ -2255,6 +2355,79 @@ $reset.addEventListener('click', () => {
   updateHUD();
   updateQuestTracker();
 });
+
+// --- Procedural ambient (pink-noise wind + random bird chirps) ---
+// Generated with the Web Audio API so there is no extra asset to ship.
+// Starts on the very first user interaction because browsers block autoplay.
+let audioCtx = null;
+let ambientStarted = false;
+let chirpTimer = 0;
+function startAmbient() {
+  if (ambientStarted) return;
+  ambientStarted = true;
+  try {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    // Pink noise buffer (Paul Kellet's method)
+    const bufSize = 2 * audioCtx.sampleRate;
+    const buf = audioCtx.createBuffer(1, bufSize, audioCtx.sampleRate);
+    const d = buf.getChannelData(0);
+    let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+    for (let i = 0; i < bufSize; i++) {
+      const w = Math.random() * 2 - 1;
+      b0 = 0.99886 * b0 + w * 0.0555179;
+      b1 = 0.99332 * b1 + w * 0.0750759;
+      b2 = 0.96900 * b2 + w * 0.1538520;
+      b3 = 0.86650 * b3 + w * 0.3104856;
+      b4 = 0.55000 * b4 + w * 0.5329522;
+      b5 = -0.7616 * b5 - w * 0.0168980;
+      d[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362) * 0.11;
+      b6 = w * 0.115926;
+    }
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    const filter = audioCtx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 320;
+    const gain = audioCtx.createGain();
+    gain.gain.value = 0.06; // soft ambient wind
+    src.connect(filter).connect(gain).connect(audioCtx.destination);
+    src.start();
+  } catch (e) {
+    console.warn('ambient audio failed', e);
+    audioCtx = null;
+  }
+}
+window.addEventListener('pointerdown', startAmbient, { once: true });
+window.addEventListener('keydown',    startAmbient, { once: true });
+
+function playChirp() {
+  if (!audioCtx) return;
+  const t = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = 'sine';
+  const f0 = 1800 + Math.random() * 2400;
+  const f1 = 1000 + Math.random() * 1200;
+  osc.frequency.setValueAtTime(f0, t);
+  osc.frequency.exponentialRampToValueAtTime(f1, t + 0.12);
+  gain.gain.setValueAtTime(0, t);
+  gain.gain.linearRampToValueAtTime(0.035, t + 0.005);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start(t);
+  osc.stop(t + 0.22);
+}
+
+function updateAmbientChirps(dt) {
+  if (!audioCtx) return;
+  chirpTimer -= dt;
+  if (chirpTimer <= 0) {
+    chirpTimer = 1.2 + Math.random() * 3.5;
+    // More chirps when more birds are nearby
+    if (birds.length > 0 && Math.random() < 0.7) playChirp();
+  }
+}
 
 // --- Music toggle (Radio Meuh stream) ---
 const $music = document.getElementById('bgm');
@@ -2473,6 +2646,7 @@ function loop() {
   try { updateInteraction(); }    catch (e) { logOnce('updateInteraction', e); }
   try { updateQuestDistances(); } catch (e) { logOnce('updateQuestDistances', e); }
   try { updateVillageDiscovery(); } catch (e) { logOnce('updateVillageDiscovery', e); }
+  try { updateAmbientChirps(dt); }  catch (e) { logOnce('updateAmbientChirps', e); }
 
   // Occasional spawn if population is low and xp allows
   if (birds.length < Math.min(12 + worldLevel() * 8, MAX_BIRDS)) {
