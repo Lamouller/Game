@@ -214,6 +214,26 @@ button:active { transform: translateY(1px); }
 .toast.hidden { opacity: 0; transform: translateX(-50%) translateY(-30px); }
 .toast b { color: #7ad7ff; }
 
+#errorOverlay {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 90vw;
+  background: rgba(80, 20, 20, 0.92);
+  border: 2px solid #ff6060;
+  color: #fff;
+  padding: 14px 20px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-family: monospace;
+  z-index: 9999;
+  box-shadow: 0 6px 30px rgba(255, 80, 80, 0.4);
+  pointer-events: auto;
+}
+#errorOverlay.hidden { display: none; }
+#errorOverlay small { opacity: 0.7; font-size: 11px; }
+
 #crosshair {
   position: fixed;
   top: 50%;
