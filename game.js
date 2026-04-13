@@ -854,6 +854,8 @@ const touchInput = {
   moveY: 0,     // -1..1 forward(+)/backward(-)
   jump:  false, // pulse — consumed once
   sprint: false,
+  lookX: 0,     // -1..1 yaw delta per second (scaled)
+  lookY: 0,     // -1..1 pitch delta per second (scaled)
 };
 
 // Low-poly lumberjack: checkered shirt, cap, satchel full of berries.
@@ -1124,66 +1126,53 @@ function buildLumberjack(group) {
     group.add(b);
   }
 
-  // --- Axe slung diagonally across the back (+Z side) ---
-  const axeGroup = new THREE.Group();
-  // Sit the whole axe just behind the torso, slightly leaning right
-  axeGroup.position.set(-0.05, 1.22, 0.42);
-  axeGroup.rotation.set(-0.08, 0, Math.PI * 0.22);
-
+  // --- Two axes: one on the back (static), one in the right hand (hidden
+  //     until the chop animation plays) ---
   const woodMat  = new THREE.MeshStandardMaterial({ color: 0x7a4a22, roughness: 0.85 });
   const steelMat = new THREE.MeshStandardMaterial({ color: 0x9aa3ab, metalness: 0.8, roughness: 0.3 });
   const darkSteelMat = new THREE.MeshStandardMaterial({ color: 0x5a6068, metalness: 0.7, roughness: 0.45 });
 
-  // Handle — long capsule
-  const handle = new THREE.Mesh(
-    new THREE.CapsuleGeometry(0.035, 1.05, 8, 16),
-    woodMat,
-  );
-  axeGroup.add(handle);
-  // Leather grip at the lower end
-  const grip = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.045, 0.045, 0.22, 10),
-    darkSteelMat,
-  );
-  grip.position.y = -0.55;
-  axeGroup.add(grip);
+  function makeAxe() {
+    const g = new THREE.Group();
+    const handle = new THREE.Mesh(new THREE.CapsuleGeometry(0.035, 1.05, 8, 16), woodMat);
+    g.add(handle);
+    const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.22, 10), darkSteelMat);
+    grip.position.y = -0.55;
+    g.add(grip);
+    const headBody = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.2, 0.08), steelMat);
+    headBody.position.y = 0.58;
+    g.add(headBody);
+    const bladeGeo = new THREE.CylinderGeometry(0.14, 0.02, 0.02, 12, 1, false, -Math.PI * 0.35, Math.PI * 0.7);
+    const blade = new THREE.Mesh(bladeGeo, steelMat);
+    blade.rotation.z = Math.PI / 2;
+    blade.position.set(0.11, 0.58, 0);
+    g.add(blade);
+    const poll = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.12, 0.07), darkSteelMat);
+    poll.position.set(-0.1, 0.58, 0);
+    g.add(poll);
+    const pin = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.1, 6), darkSteelMat);
+    pin.position.y = 0.58;
+    pin.rotation.z = Math.PI / 2;
+    g.add(pin);
+    return g;
+  }
 
-  // Axe head — a trapezoid-ish wedge built from a box + a cutting blade
-  const headBody = new THREE.Mesh(
-    new THREE.BoxGeometry(0.14, 0.2, 0.08),
-    steelMat,
-  );
-  headBody.position.y = 0.58;
-  axeGroup.add(headBody);
+  // Back axe — sits diagonally on the lumberjack's back (+Z)
+  const backAxe = makeAxe();
+  backAxe.position.set(-0.05, 1.22, 0.42);
+  backAxe.rotation.set(-0.08, 0, Math.PI * 0.22);
+  group.add(backAxe);
 
-  // Blade: a wider flared plate on the outer edge — achieved with a
-  // small cylinder rotated 90° so the "disk" becomes a vertical fan
-  const bladeGeo = new THREE.CylinderGeometry(0.14, 0.02, 0.02, 12, 1, false, -Math.PI * 0.35, Math.PI * 0.7);
-  const blade = new THREE.Mesh(bladeGeo, steelMat);
-  blade.rotation.z = Math.PI / 2;
-  blade.position.set(0.11, 0.58, 0);
-  axeGroup.add(blade);
+  // Hand axe — child of the right wrist, hidden until the chop animation
+  const handAxe = makeAxe();
+  // The wrist y origin is at the base of the forearm; we want the handle
+  // in the fist so the blade is pointing upward + forward while at rest.
+  handAxe.position.set(0, -0.25, 0);
+  handAxe.rotation.set(-0.4, 0, 0);
+  handAxe.visible = false;
+  armR.wrist.add(handAxe);
 
-  // Small back fin (counterweight / poll)
-  const poll = new THREE.Mesh(
-    new THREE.BoxGeometry(0.06, 0.12, 0.07),
-    darkSteelMat,
-  );
-  poll.position.set(-0.1, 0.58, 0);
-  axeGroup.add(poll);
-
-  // Handle pin through the head (decorative)
-  const pin = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.012, 0.012, 0.1, 6),
-    darkSteelMat,
-  );
-  pin.position.y = 0.58;
-  pin.rotation.z = Math.PI / 2;
-  axeGroup.add(pin);
-
-  group.add(axeGroup);
-
-  return { legL, legR, armL, armR, torso, neck, headPivot };
+  return { legL, legR, armL, armR, torso, neck, headPivot, backAxe, handAxe };
 }
 player.parts = buildLumberjack(player.group);
 player.walkPhase = 0;
@@ -1212,6 +1201,13 @@ function placePlayerOnGround() {
 function updatePlayer(dt) {
   const seed = save.worldSeed;
   const lvl = worldLevel();
+
+  // Apply look joystick (mobile) to yaw / pitch
+  if (touchInput.lookX || touchInput.lookY) {
+    player.yaw   -= touchInput.lookX * dt * 2.4;
+    player.pitch -= touchInput.lookY * dt * 2.0;
+    player.pitch = Math.max(-0.6, Math.min(1.0, player.pitch));
+  }
 
   // Build horizontal forward / right from yaw
   forward.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
@@ -1248,16 +1244,19 @@ function updatePlayer(dt) {
   player.swimming = playerSwimming;
 
   if (playerSwimming) {
-    // Water resistance + buoyancy (player floats up toward surface)
-    player.vel.x *= 0.85;
-    player.vel.z *= 0.85;
-    // Gentle buoyancy pulling player's head toward surface
-    const targetY = waterSurface + PLAYER_HEIGHT * 0.5 - 0.4;
-    player.vel.y += (targetY - player.pos.y) * 2.5 * dt * 10;
-    player.vel.y *= 0.85; // damping
-    // Space key = swim up (paddle)
+    // Strong water drag — swimming is clearly slower than walking
+    player.vel.x *= 0.55;
+    player.vel.z *= 0.55;
+    // Buoyancy target: water surface reaches roughly the lumberjack's
+    // shoulders so only his head + shoulders are visibly above water.
+    // Player y is the pelvis; head is at y + 1.0; we want head ~0.4 above
+    // surface, so pelvis should sit at (waterSurface + 0.4 - 1.0) = surface - 0.6.
+    const targetY = waterSurface - 0.6 + PLAYER_HEIGHT * 0.5;
+    player.vel.y += (targetY - player.pos.y) * 4 * dt * 10;
+    player.vel.y *= 0.82;
+    // Space / jump = paddle up
     if (keys['Space'] || keys['KeyJ'] || touchInput.jump) {
-      player.vel.y += 12 * dt;
+      player.vel.y += 10 * dt;
     }
     touchInput.jump = false;
   } else {
@@ -1274,7 +1273,9 @@ function updatePlayer(dt) {
   player.pos.addScaledVector(player.vel, dt);
 
   // Ground collision via terrain heightfield
-  const footY = Math.max(groundH, waterSurface - 0.8) + PLAYER_HEIGHT * 0.5;
+  // When swimming, the "floor" is the water floor so the player can dive
+  // all the way to the bottom if they want (Space pushes them back up).
+  const footY = groundH + PLAYER_HEIGHT * 0.5;
   if (player.pos.y < footY) {
     player.pos.y = footY;
     if (player.vel.y < 0) player.vel.y = 0;
@@ -1290,14 +1291,16 @@ function updatePlayer(dt) {
   player.group.position.y -= PLAYER_HEIGHT * 0.5; // mesh is modelled with feet at 0
   player.group.rotation.y = player.yaw;
 
-  // --- Walk animation: full skeletal chain ---
+  // --- Walk / swim animation: full skeletal chain ---
   const horizSpeed = Math.hypot(player.vel.x, player.vel.z);
-  if (horizSpeed > 0.1) {
+  if (player.swimming) {
+    player.walkPhase += dt * 2.5; // slow constant paddle
+  } else if (horizSpeed > 0.1) {
     player.walkPhase += dt * (5 + horizSpeed * 0.6);
   } else {
     player.walkPhase *= 0.88;
   }
-  const moving = horizSpeed > 0.1 ? 1 : 0;
+  const moving = (player.swimming || horizSpeed > 0.1) ? 1 : 0;
   const sinP  = Math.sin(player.walkPhase);
   const sinP2 = Math.sin(player.walkPhase * 2);
   // Hip (thigh) swing
@@ -1347,26 +1350,53 @@ function updatePlayer(dt) {
   // Whole-body bob up/down (2× phase since each step contributes a bob)
   player.group.position.y += Math.abs(sinP2) * 0.06 * moving;
 
+  // --- Swimming override: breaststroke-ish pose ---
+  if (player.swimming) {
+    // Torso leans forward (prone)
+    player.parts.torso.rotation.x = -0.8;
+    player.parts.neck.rotation.x = 0.3; // head looks forward
+    // Legs extended behind, kicking
+    const kick = sinP * 0.35;
+    player.parts.legL.hip.rotation.x = -0.7 + kick;
+    player.parts.legR.hip.rotation.x = -0.7 - kick;
+    player.parts.legL.knee.rotation.x = Math.max(0, -kick * 1.5);
+    player.parts.legR.knee.rotation.x = Math.max(0,  kick * 1.5);
+    player.parts.legL.ankle.rotation.x = -0.2;
+    player.parts.legR.ankle.rotation.x = -0.2;
+    // Arms do a breaststroke circle: forward, out, back
+    const stroke = (Math.sin(player.walkPhase) + 1) * 0.5; // 0..1
+    player.parts.armL.shoulder.rotation.x = -1.4 + stroke * 0.8;
+    player.parts.armR.shoulder.rotation.x = -1.4 + stroke * 0.8;
+    player.parts.armL.shoulder.rotation.z =  0.4 + stroke * 0.4;
+    player.parts.armR.shoulder.rotation.z = -0.4 - stroke * 0.4;
+    player.parts.armL.elbow.rotation.x = -0.3 - stroke * 0.6;
+    player.parts.armR.elbow.rotation.x = -0.3 - stroke * 0.6;
+    player.parts.armL.wrist.rotation.x = 0;
+    player.parts.armR.wrist.rotation.x = 0;
+  }
+
   // --- Axe swing override for gathering ---
   // While axeSwing is positive, the right arm is driven manually through a
-  // quick chop arc instead of following the walk cycle.
+  // quick chop arc instead of following the walk cycle, and the hand axe
+  // takes the place of the back axe for the duration.
   if (player.axeSwing > 0) {
     player.axeSwing = Math.max(0, player.axeSwing - dt);
-    // t goes 0 → 1 over 0.55 s
+    player.parts.backAxe.visible = false;
+    player.parts.handAxe.visible = true;
     const t = 1 - player.axeSwing / 0.55;
-    // Raise then slam: shoulder rotates from +0.4 rad (back) to -1.8 rad (forward-down)
-    // Use a smoothstep-like curve so it's fast at the apex
     const chop = t < 0.35
-      ? (t / 0.35) * 0.8        // wind-up: arm back + up
-      : 1 - ((t - 0.35) / 0.65); // slam: forward-down
+      ? (t / 0.35) * 0.8
+      : 1 - ((t - 0.35) / 0.65);
     const shoulderX = 0.6 - chop * 2.4;
     const elbowX    = -0.4 - chop * 1.2;
     player.parts.armR.shoulder.rotation.x = shoulderX;
     player.parts.armR.shoulder.rotation.z = -0.15;
     player.parts.armR.elbow.rotation.x = elbowX;
     player.parts.armR.wrist.rotation.x = 0;
-    // Torso leans slightly forward during the swing
     player.parts.torso.rotation.x += -chop * 0.15;
+  } else {
+    player.parts.backAxe.visible = true;
+    player.parts.handAxe.visible = false;
   }
 
   // Follow camera — orbital around player using yaw/pitch
@@ -1405,15 +1435,42 @@ function dropFood(point) {
   mesh.position.copy(point);
   mesh.position.y += 0.5;
   scene.add(mesh);
-  foods.push({
+  const foodRec = {
     pos: mesh.position,
     tier,
     life: def.life,
     energy: def.energy,
     mesh,
-  });
-  // Spawn a new bird if we don't have many, proportional to tier
+  };
+  foods.push(foodRec);
+
+  // Guaranteed bird visit: if no bird is within 25 units of the food,
+  // spawn one right next to it with a velocity pointing straight at it,
+  // so the player always sees a bird arrive after dropping food.
+  let closestDist = Infinity;
+  for (const b of birds) {
+    const d = b.pos.distanceTo(foodRec.pos);
+    if (d < closestDist) closestDist = d;
+  }
+  if (closestDist > 25 && birds.length < MAX_BIRDS) {
+    const angle = Math.random() * Math.PI * 2;
+    const dist  = 12 + Math.random() * 6; // spawn 12-18 units from the food
+    const sx = foodRec.pos.x + Math.cos(angle) * dist;
+    const sz = foodRec.pos.z + Math.sin(angle) * dist;
+    const sy = foodRec.pos.y + 3 + Math.random() * 3;
+    const bird = new Bird(new THREE.Vector3(sx, sy, sz));
+    // Point velocity straight at the food
+    const dir = new THREE.Vector3(
+      foodRec.pos.x - sx,
+      foodRec.pos.y - sy,
+      foodRec.pos.z - sz,
+    ).normalize().multiplyScalar(MAX_SPEED);
+    bird.vel.copy(dir);
+    birds.push(bird);
+  }
+  // Also occasionally spawn an extra bird for visual density
   if (birds.length < MAX_BIRDS && Math.random() < 0.35 + tier * 0.1) spawnBird();
+
   // Quest progress (drop_tier objective)
   questEvent('drop_tier', { tier });
 }
@@ -1708,6 +1765,7 @@ class Bird {
     // --- Pollination state ---
     this.chargeTier = 0;   // tier of the food last eaten (drives plant rarity)
     this.chargeLeft = 0;   // seconds of charge remaining; plant drops when this hits 0 from positive
+    this.postMealPause = 0; // after eating, hover in place briefly so the player sees the bird
   }
 }
 
@@ -1864,18 +1922,25 @@ function updateBirds(dt) {
     b.age += dt;
     b.energy -= dt * 0.6;
 
+    // Post-meal hover: after eating, the bird slows to a near stop for a
+    // half-second so the player clearly sees it land + take off again.
+    if (b.postMealPause > 0) {
+      b.postMealPause -= dt;
+      b.vel.multiplyScalar(0.82);
+    }
+
     // Eat food if close enough
     if (best && b.pos.distanceTo(best.pos) < 2.2) {
       b.energy += best.energy * 10;
       gainXp(best.energy);
       questEvent('feed');
       recordSpecies(b);
-      // --- Pollination: instantly grow a plant where the food was ---
-      // Much more visible than the old "carry a seed and drop it later"
-      // system, which relied on bird movement that the player often
-      // didn't notice.
-      plantAtPosition(best.pos.x, best.pos.z, best.tier);
+      // (Pollination spawns a plant LATER, far from the food, so that
+      //  the food itself clearly "gets eaten" rather than being replaced.)
       b.chargeTier = best.tier;
+      b.chargeLeft = 4 + best.tier * 2;
+      // Brief hover so the player sees the bird before it zooms off
+      b.postMealPause = 0.6;
       // remove food
       const idx = foods.indexOf(best);
       if (idx !== -1) {
@@ -2798,7 +2863,43 @@ if (joy) {
   joy.addEventListener('pointercancel', endJoy);
 }
 
-// --- Feed & Jump buttons ---
+// --- Look joystick (right side, camera yaw / pitch) ---
+const lookJoy   = document.getElementById('lookJoystick');
+const lookThumb = document.getElementById('lookJoystickThumb');
+let lookJoyId = null;
+let lookCX = 0, lookCY = 0;
+if (lookJoy) {
+  lookJoy.addEventListener('pointerdown', e => {
+    if (lookJoyId !== null) return;
+    lookJoyId = e.pointerId;
+    const rect = lookJoy.getBoundingClientRect();
+    lookCX = rect.left + rect.width  / 2;
+    lookCY = rect.top  + rect.height / 2;
+    lookJoy.setPointerCapture?.(e.pointerId);
+    e.preventDefault();
+  });
+  lookJoy.addEventListener('pointermove', e => {
+    if (e.pointerId !== lookJoyId) return;
+    let dx = e.clientX - lookCX;
+    let dy = e.clientY - lookCY;
+    const mag = Math.hypot(dx, dy);
+    if (mag > JOY_MAX) { dx *= JOY_MAX / mag; dy *= JOY_MAX / mag; }
+    lookThumb.style.transform = `translate(${dx}px, ${dy}px)`;
+    touchInput.lookX =  dx / JOY_MAX;
+    touchInput.lookY =  dy / JOY_MAX;
+  });
+  const endLook = e => {
+    if (e.pointerId !== lookJoyId) return;
+    lookJoyId = null;
+    lookThumb.style.transform = '';
+    touchInput.lookX = 0;
+    touchInput.lookY = 0;
+  };
+  lookJoy.addEventListener('pointerup', endLook);
+  lookJoy.addEventListener('pointercancel', endLook);
+}
+
+// --- Feed, Jump, Gather, Interact buttons ---
 const btnFeed = document.getElementById('btnFeed');
 const btnJump = document.getElementById('btnJump');
 btnFeed?.addEventListener('pointerdown', e => {
