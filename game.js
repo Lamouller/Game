@@ -59,25 +59,10 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x9fd0ff);
 scene.fog = new THREE.Fog(0x9fd0ff, 90, 280);
 
-const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 600);
-// Simple orbital camera state
-const camState = {
-  target: new THREE.Vector3(0, 8, 0),
-  dist: 95,
-  yaw: 0.7,
-  pitch: 0.55,
-};
-function applyCamera() {
-  const cp = Math.cos(camState.pitch), sp = Math.sin(camState.pitch);
-  const cy = Math.cos(camState.yaw),   sy = Math.sin(camState.yaw);
-  camera.position.set(
-    camState.target.x + camState.dist * cp * sy,
-    camState.target.y + camState.dist * sp,
-    camState.target.z + camState.dist * cp * cy,
-  );
-  camera.lookAt(camState.target);
-}
-applyCamera();
+const camera = new THREE.PerspectiveCamera(70, 1, 0.1, 600);
+// Camera is a 3rd-person follow camera controlled by the player (see Player section)
+camera.position.set(0, 20, 30);
+camera.lookAt(0, 0, 0);
 
 // Lights
 const sun = new THREE.DirectionalLight(0xfff0d0, 1.0);
@@ -94,6 +79,26 @@ function onResize() {
 }
 window.addEventListener('resize', onResize);
 onResize();
+
+// =============================================================================
+// Keyboard / pointer state (used by Player)
+// =============================================================================
+const keys = Object.create(null);
+window.addEventListener('keydown', e => {
+  keys[e.code] = true;
+  // 1..5 select food tier
+  if (e.code.startsWith('Digit')) {
+    const i = parseInt(e.code.slice(5), 10) - 1;
+    if (i >= 0 && i < FOODS.length && foodUnlocked(i)) {
+      save.selectedFood = i;
+      persist();
+      buildFoodbar();
+    }
+  }
+  if (e.code === 'Escape') document.exitPointerLock?.();
+});
+window.addEventListener('keyup', e => { keys[e.code] = false; });
+window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
 
 // =============================================================================
 // Value noise (seeded, allocation-free)
@@ -264,6 +269,134 @@ function buildWorld() {
 }
 
 // =============================================================================
+// Player (3rd-person ground character)
+// =============================================================================
+const PLAYER_HEIGHT = 1.8;
+const PLAYER_RADIUS = 0.4;
+const PLAYER_WALK   = 8;
+const PLAYER_SPRINT = 14;
+const PLAYER_JUMP   = 8.5;
+const GRAVITY       = 22;
+
+const player = {
+  pos: new THREE.Vector3(0, 30, 0),
+  vel: new THREE.Vector3(),
+  yaw: 0,
+  pitch: 0.15,
+  onGround: false,
+  group: new THREE.Group(),
+};
+
+// Simple low-poly character: body capsule + head + arm hint
+{
+  const bodyMat = new THREE.MeshLambertMaterial({ color: 0x4a7fff });
+  const headMat = new THREE.MeshLambertMaterial({ color: 0xffd9a8 });
+  const body = new THREE.Mesh(
+    new THREE.CapsuleGeometry(PLAYER_RADIUS, 1.0, 4, 8),
+    bodyMat,
+  );
+  body.position.y = 0.9;
+  const head = new THREE.Mesh(
+    new THREE.SphereGeometry(0.28, 12, 8),
+    headMat,
+  );
+  head.position.y = 1.7;
+  const arm = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.08, 0.08, 0.7, 6),
+    bodyMat,
+  );
+  arm.position.set(0.35, 1.1, 0.1);
+  arm.rotation.z = -0.5;
+  player.group.add(body, head, arm);
+  scene.add(player.group);
+}
+
+// Camera follow parameters
+const CAM_DIST   = 6;
+const CAM_HEIGHT = 2.2;
+const tmpCamPos = new THREE.Vector3();
+const tmpLookAt = new THREE.Vector3();
+const moveDir = new THREE.Vector3();
+const forward = new THREE.Vector3();
+const right   = new THREE.Vector3();
+
+function placePlayerOnGround() {
+  const seed = save.worldSeed;
+  const lvl = worldLevel();
+  const h = terrainHeight(player.pos.x, player.pos.z, seed, lvl);
+  player.pos.y = h + PLAYER_HEIGHT * 0.5;
+  player.vel.set(0, 0, 0);
+  player.onGround = true;
+}
+
+function updatePlayer(dt) {
+  const seed = save.worldSeed;
+  const lvl = worldLevel();
+
+  // Build horizontal forward / right from yaw
+  forward.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
+  right.set(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
+
+  moveDir.set(0, 0, 0);
+  if (keys['KeyW'] || keys['ArrowUp'])    moveDir.add(forward);
+  if (keys['KeyS'] || keys['ArrowDown'])  moveDir.sub(forward);
+  if (keys['KeyD'] || keys['ArrowRight']) moveDir.add(right);
+  if (keys['KeyA'] || keys['ArrowLeft'])  moveDir.sub(right);
+  if (moveDir.lengthSq() > 0) moveDir.normalize();
+
+  const speed = (keys['ShiftLeft'] || keys['ShiftRight']) ? PLAYER_SPRINT : PLAYER_WALK;
+  player.vel.x = moveDir.x * speed;
+  player.vel.z = moveDir.z * speed;
+
+  // Gravity
+  player.vel.y -= GRAVITY * dt;
+
+  // Jump
+  if (player.onGround && (keys['Space'] || keys['KeyJ'])) {
+    player.vel.y = PLAYER_JUMP;
+    player.onGround = false;
+  }
+
+  player.pos.addScaledVector(player.vel, dt);
+
+  // Ground collision via terrain heightfield
+  const groundH = terrainHeight(player.pos.x, player.pos.z, seed, lvl);
+  const footY = groundH + PLAYER_HEIGHT * 0.5;
+  if (player.pos.y < footY) {
+    player.pos.y = footY;
+    player.vel.y = 0;
+    player.onGround = true;
+  } else {
+    player.onGround = player.pos.y - footY < 0.05;
+  }
+
+  // Keep inside world bounds
+  const bound = WORLD_SIZE * 0.48;
+  player.pos.x = Math.max(-bound, Math.min(bound, player.pos.x));
+  player.pos.z = Math.max(-bound, Math.min(bound, player.pos.z));
+
+  // Update mesh
+  player.group.position.copy(player.pos);
+  player.group.position.y -= PLAYER_HEIGHT * 0.5; // mesh is modelled with feet at 0
+  player.group.rotation.y = player.yaw;
+
+  // Follow camera — orbital around player using yaw/pitch
+  const cp = Math.cos(player.pitch), sp = Math.sin(player.pitch);
+  const cy = Math.cos(player.yaw),   sy = Math.sin(player.yaw);
+  tmpCamPos.set(
+    player.pos.x + CAM_DIST * cp * sy,
+    player.pos.y + CAM_HEIGHT + CAM_DIST * sp,
+    player.pos.z + CAM_DIST * cp * cy,
+  );
+  // Prevent camera from going below terrain
+  const camGround = terrainHeight(tmpCamPos.x, tmpCamPos.z, seed, lvl) + 1.2;
+  if (tmpCamPos.y < camGround) tmpCamPos.y = camGround;
+  camera.position.copy(tmpCamPos);
+  tmpLookAt.set(player.pos.x, player.pos.y + 0.6, player.pos.z);
+  camera.lookAt(tmpLookAt);
+}
+
+// =============================================================================
 // Food system
 // =============================================================================
 const foods = []; // { pos, tier, life, energy, mesh }
@@ -292,6 +425,18 @@ function dropFood(point) {
   });
   // Spawn a new bird if we don't have many, proportional to tier
   if (birds.length < MAX_BIRDS && Math.random() < 0.35 + tier * 0.1) spawnBird();
+}
+
+// Drop food at the player's feet (or slightly in front)
+function dropFoodAtPlayer() {
+  const p = new THREE.Vector3().copy(player.pos);
+  // Offset slightly forward, in facing direction
+  p.x += -Math.sin(player.yaw) * 1.2;
+  p.z += -Math.cos(player.yaw) * 1.2;
+  const seed = save.worldSeed;
+  const lvl = worldLevel();
+  p.y = terrainHeight(p.x, p.z, seed, lvl) + 0.4;
+  dropFood(p);
 }
 
 function updateFoods(dt) {
@@ -602,6 +747,7 @@ function gainXp(amount) {
     lastLevel = lv;
     showToast(`Le monde évolue — <b>niveau ${lv}</b>`);
     buildWorld();
+    placePlayerOnGround();
   }
   persist();
   updateHUD();
@@ -611,6 +757,7 @@ $regen.addEventListener('click', () => {
   save.worldSeed = (Math.random() * 1e9) | 0;
   persist();
   buildWorld();
+  placePlayerOnGround();
 });
 $reset.addEventListener('click', () => {
   if (!confirm('Tout réinitialiser ?')) return;
@@ -621,6 +768,7 @@ $reset.addEventListener('click', () => {
   foods.length = 0;
   lastLevel = worldLevel();
   buildWorld();
+  placePlayerOnGround();
   buildFoodbar();
   updateHUD();
 });
@@ -628,63 +776,34 @@ $reset.addEventListener('click', () => {
 // =============================================================================
 // Input: click to feed, right-drag to orbit, wheel to zoom
 // =============================================================================
-const raycaster = new THREE.Raycaster();
-const mouseNDC = new THREE.Vector2();
-
-let dragging = false;
-let dragMoved = false;
-let lastX = 0, lastY = 0;
-
+// Pointer lock for mouse look, click to feed at player position
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 
-canvas.addEventListener('pointerdown', e => {
-  dragging = true;
-  dragMoved = false;
-  lastX = e.clientX;
-  lastY = e.clientY;
-  canvas.setPointerCapture(e.pointerId);
-});
-
-canvas.addEventListener('pointermove', e => {
-  if (!dragging) return;
-  const dx = e.clientX - lastX;
-  const dy = e.clientY - lastY;
-  lastX = e.clientX;
-  lastY = e.clientY;
-  if (Math.abs(dx) + Math.abs(dy) > 3) dragMoved = true;
-  if (e.buttons & 2 || e.shiftKey) {
-    camState.yaw   -= dx * 0.005;
-    camState.pitch += dy * 0.005;
-    camState.pitch = Math.max(0.1, Math.min(1.4, camState.pitch));
-    applyCamera();
+canvas.addEventListener('click', () => {
+  if (document.pointerLockElement !== canvas) {
+    canvas.requestPointerLock?.();
+  } else {
+    // Already locked — clicking feeds
+    dropFoodAtPlayer();
   }
 });
 
-canvas.addEventListener('pointerup', e => {
-  canvas.releasePointerCapture?.(e.pointerId);
-  if (!dragMoved && e.button === 0) {
-    // Treat as click — feed
-    const rect = canvas.getBoundingClientRect();
-    mouseNDC.x =  ((e.clientX - rect.left) / rect.width)  * 2 - 1;
-    mouseNDC.y = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
-    raycaster.setFromCamera(mouseNDC, camera);
-    const hits = raycaster.intersectObject(terrainRef, false);
-    if (hits.length > 0) dropFood(hits[0].point);
-  }
-  dragging = false;
+document.addEventListener('pointerlockchange', () => {
+  // Nothing special; mousemove handler checks the state
 });
 
-canvas.addEventListener('wheel', e => {
-  e.preventDefault();
-  camState.dist *= 1 + Math.sign(e.deltaY) * 0.1;
-  camState.dist = Math.max(25, Math.min(200, camState.dist));
-  applyCamera();
-}, { passive: false });
+window.addEventListener('mousemove', e => {
+  if (document.pointerLockElement !== canvas) return;
+  player.yaw   -= e.movementX * 0.0025;
+  player.pitch -= e.movementY * 0.0025;
+  player.pitch = Math.max(-0.6, Math.min(1.0, player.pitch));
+});
 
 // =============================================================================
 // Init + game loop
 // =============================================================================
 buildWorld();
+placePlayerOnGround();
 buildFoodbar();
 updateHUD();
 
@@ -693,7 +812,6 @@ for (let i = 0; i < 8; i++) spawnBird();
 
 let lastT = performance.now();
 let hudAcc = 0;
-let autoRot = 0;
 
 function loop() {
   requestAnimationFrame(loop);
@@ -702,13 +820,7 @@ function loop() {
   if (dt > 0.1) dt = 0.1;
   lastT = now;
 
-  // Gentle auto-orbit when idle
-  autoRot += dt * 0.03;
-  if (!dragging) {
-    camState.yaw += dt * 0.04;
-    applyCamera();
-  }
-
+  updatePlayer(dt);
   updateBirds(dt);
   updateFoods(dt);
   renderBirds();
