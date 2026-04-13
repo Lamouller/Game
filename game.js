@@ -133,12 +133,34 @@ function fbm(x, y, seed, octaves = 4) {
 // =============================================================================
 // World generation (procedural terrain + instanced trees / rocks)
 // =============================================================================
-const WORLD_SIZE = 220;
-const WORLD_SEG  = 140;
+// Chunk-based endless world. Terrain, trees, rocks and flowers are generated
+// per chunk, deterministically from (chunkX, chunkZ, worldSeed), so the world
+// is the same whenever you revisit a location. Only a small ring of chunks
+// around the player is kept in memory at a time.
+const CHUNK_SIZE = 64;   // world units per chunk side
+const CHUNK_SEG  = 32;   // subdivisions per chunk side
+const VIEW_RADIUS = 3;   // (2*VIEW_RADIUS+1)^2 chunks visible => 7x7 = 49
+
 let worldGroup = new THREE.Group();
 scene.add(worldGroup);
-let terrainRef = null;
-let perches = []; // THREE.Vector3[] — potential perch points on trees
+// Map key "cx,cz" -> { group, cx, cz }
+const chunks = new Map();
+
+// Shared materials — created once, re-used by every chunk
+const terrainMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
+const foliageMat = new THREE.MeshLambertMaterial({ color: 0x2e5a2a });
+const trunkMat   = new THREE.MeshLambertMaterial({ color: 0x5a3a22 });
+const rockMat    = new THREE.MeshLambertMaterial({ color: 0x888888, flatShading: true });
+const flowerMat  = new THREE.MeshLambertMaterial({ color: 0xff9ad0 });
+
+// Shared instanced-mesh source geometries
+const foliageGeoSrc = new THREE.ConeGeometry(1.6, 5, 6);
+foliageGeoSrc.translate(0, 3.4, 0);
+const trunkGeoSrc = new THREE.CylinderGeometry(0.3, 0.45, 1.4, 5);
+trunkGeoSrc.translate(0, 0.7, 0);
+const rockGeoSrc   = new THREE.DodecahedronGeometry(1, 0);
+const flowerGeoSrc = new THREE.ConeGeometry(0.2, 0.8, 4);
+flowerGeoSrc.translate(0, 0.4, 0);
 
 function terrainHeight(x, z, seed, lvl) {
   const s1 = 1 / 42;
@@ -149,123 +171,160 @@ function terrainHeight(x, z, seed, lvl) {
   return h;
 }
 
-function disposeGroup(g) {
-  while (g.children.length) {
-    const c = g.children.pop();
-    if (c.geometry) c.geometry.dispose();
-    if (c.material) {
-      if (Array.isArray(c.material)) c.material.forEach(m => m.dispose());
-      else c.material.dispose();
-    }
-  }
+// Seeded deterministic PRNG (mulberry32) so every chunk yields the same
+// content across regenerations / sessions.
+function mulberry32(a) {
+  return function () {
+    let t = (a += 0x6D2B79F5);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
-function buildWorld() {
-  disposeGroup(worldGroup);
-  perches = [];
-  const lvl = worldLevel();
-  const seed = save.worldSeed;
+function chunkKey(cx, cz) { return cx + ',' + cz; }
 
-  // Terrain
-  const geo = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE, WORLD_SEG, WORLD_SEG);
+function buildChunk(cx, cz) {
+  const seed = save.worldSeed;
+  const lvl  = worldLevel();
+  const originX = cx * CHUNK_SIZE;
+  const originZ = cz * CHUNK_SIZE;
+  const rand = mulberry32((cx * 73856093) ^ (cz * 19349663) ^ (seed * 2654435761));
+
+  const group = new THREE.Group();
+
+  // --- Terrain patch ---
+  const geo = new THREE.PlaneGeometry(CHUNK_SIZE, CHUNK_SIZE, CHUNK_SEG, CHUNK_SEG);
   geo.rotateX(-Math.PI / 2);
   const pos = geo.attributes.position;
   const colors = new Float32Array(pos.count * 3);
   const tmpColor = new THREE.Color();
   for (let i = 0; i < pos.count; i++) {
-    const x = pos.getX(i), z = pos.getZ(i);
-    const h = terrainHeight(x, z, seed, lvl);
+    const lx = pos.getX(i);
+    const lz = pos.getZ(i);
+    const wx = originX + lx;
+    const wz = originZ + lz;
+    const h = terrainHeight(wx, wz, seed, lvl);
     pos.setY(i, h);
-    if (h < -2)       tmpColor.setRGB(0.82, 0.78, 0.55);         // sand
-    else if (h < 2)   tmpColor.setRGB(0.72, 0.76, 0.40);         // dry grass
-    else if (h < 13)  tmpColor.setRGB(0.25 + (h / 40), 0.52, 0.22); // forest
-    else              tmpColor.setRGB(0.55, 0.55, 0.55);         // rock
+    if (h < -2)      tmpColor.setRGB(0.82, 0.78, 0.55);
+    else if (h < 2)  tmpColor.setRGB(0.72, 0.76, 0.40);
+    else if (h < 13) tmpColor.setRGB(0.25 + (h / 40), 0.52, 0.22);
+    else             tmpColor.setRGB(0.55, 0.55, 0.55);
     colors[i * 3]     = tmpColor.r;
     colors[i * 3 + 1] = tmpColor.g;
     colors[i * 3 + 2] = tmpColor.b;
   }
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   geo.computeVertexNormals();
-  const terrainMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
-  terrainRef = new THREE.Mesh(geo, terrainMat);
-  terrainRef.name = 'terrain';
-  worldGroup.add(terrainRef);
+  const terrain = new THREE.Mesh(geo, terrainMat);
+  terrain.position.set(originX, 0, originZ);
+  group.add(terrain);
 
-  // Trees (cone foliage + cylinder trunk), InstancedMesh
-  const nTrees = 80 + lvl * 50;
-  const foliageGeo = new THREE.ConeGeometry(1.6, 5, 6);
-  foliageGeo.translate(0, 3.4, 0);
-  const trunkGeo = new THREE.CylinderGeometry(0.3, 0.45, 1.4, 5);
-  trunkGeo.translate(0, 0.7, 0);
-  const foliageMat = new THREE.MeshLambertMaterial({ color: 0x2e5a2a });
-  const trunkMat   = new THREE.MeshLambertMaterial({ color: 0x5a3a22 });
-  const foliage = new THREE.InstancedMesh(foliageGeo, foliageMat, nTrees);
-  const trunks  = new THREE.InstancedMesh(trunkGeo,   trunkMat,   nTrees);
+  // --- Trees ---
+  const nTreesTarget = 6 + Math.floor(rand() * (4 + lvl * 2));
   const dummy = new THREE.Object3D();
+  const foliage = new THREE.InstancedMesh(foliageGeoSrc, foliageMat, nTreesTarget);
+  const trunks  = new THREE.InstancedMesh(trunkGeoSrc,   trunkMat,   nTreesTarget);
   let placed = 0;
-  for (let i = 0; i < nTrees * 3 && placed < nTrees; i++) {
-    const x = (Math.random() - 0.5) * WORLD_SIZE * 0.92;
-    const z = (Math.random() - 0.5) * WORLD_SIZE * 0.92;
+  for (let i = 0; i < nTreesTarget * 4 && placed < nTreesTarget; i++) {
+    const x = originX + rand() * CHUNK_SIZE;
+    const z = originZ + rand() * CHUNK_SIZE;
     const h = terrainHeight(x, z, seed, lvl);
     if (h < 1 || h > 15) continue;
-    const s = 0.8 + Math.random() * 1.6;
+    const s = 0.8 + rand() * 1.6;
     dummy.position.set(x, h, z);
     dummy.scale.set(s, s, s);
-    dummy.rotation.y = Math.random() * Math.PI * 2;
+    dummy.rotation.y = rand() * Math.PI * 2;
     dummy.updateMatrix();
     foliage.setMatrixAt(placed, dummy.matrix);
     trunks.setMatrixAt(placed,  dummy.matrix);
-    perches.push(new THREE.Vector3(x, h + 5 * s, z));
     placed++;
   }
   foliage.count = placed;
   trunks.count  = placed;
-  worldGroup.add(trunks);
-  worldGroup.add(foliage);
+  group.add(trunks);
+  group.add(foliage);
 
-  // Rocks
-  const nRocks = 30 + lvl * 14;
-  const rockGeo = new THREE.DodecahedronGeometry(1, 0);
-  const rockMat = new THREE.MeshLambertMaterial({ color: 0x888888, flatShading: true });
-  const rocks = new THREE.InstancedMesh(rockGeo, rockMat, nRocks);
+  // --- Rocks ---
+  const nRocks = 3 + Math.floor(rand() * (3 + lvl));
+  const rocks = new THREE.InstancedMesh(rockGeoSrc, rockMat, nRocks);
   for (let i = 0; i < nRocks; i++) {
-    const x = (Math.random() - 0.5) * WORLD_SIZE * 0.95;
-    const z = (Math.random() - 0.5) * WORLD_SIZE * 0.95;
+    const x = originX + rand() * CHUNK_SIZE;
+    const z = originZ + rand() * CHUNK_SIZE;
     const h = terrainHeight(x, z, seed, lvl);
-    const s = 0.6 + Math.random() * 2.8;
+    const s = 0.6 + rand() * 2.4;
     dummy.position.set(x, h + s * 0.35, z);
     dummy.scale.set(s, s * 0.75, s);
-    dummy.rotation.set(Math.random(), Math.random() * Math.PI, Math.random());
+    dummy.rotation.set(rand() * 6.28, rand() * 6.28, rand() * 6.28);
     dummy.updateMatrix();
     rocks.setMatrixAt(i, dummy.matrix);
   }
-  worldGroup.add(rocks);
+  rocks.count = nRocks;
+  group.add(rocks);
 
-  // Optional flowers / tall grass at higher levels
+  // --- Flowers (higher world level) ---
   if (lvl >= 4) {
-    const n = 120 + lvl * 30;
-    const g = new THREE.ConeGeometry(0.2, 0.8, 4);
-    g.translate(0, 0.4, 0);
-    const m = new THREE.MeshLambertMaterial({ color: 0xff9ad0 });
-    const im = new THREE.InstancedMesh(g, m, n);
-    for (let i = 0; i < n; i++) {
-      const x = (Math.random() - 0.5) * WORLD_SIZE * 0.9;
-      const z = (Math.random() - 0.5) * WORLD_SIZE * 0.9;
+    const nFlowers = 12 + Math.floor(rand() * (lvl * 4));
+    const flowers = new THREE.InstancedMesh(flowerGeoSrc, flowerMat, nFlowers);
+    for (let i = 0; i < nFlowers; i++) {
+      const x = originX + rand() * CHUNK_SIZE;
+      const z = originZ + rand() * CHUNK_SIZE;
       const h = terrainHeight(x, z, seed, lvl);
       dummy.position.set(x, h, z);
-      dummy.scale.set(1, 1 + Math.random(), 1);
-      dummy.rotation.y = Math.random() * Math.PI * 2;
+      dummy.scale.set(1, 1 + rand(), 1);
+      dummy.rotation.y = rand() * Math.PI * 2;
       dummy.updateMatrix();
-      im.setMatrixAt(i, dummy.matrix);
+      flowers.setMatrixAt(i, dummy.matrix);
     }
-    worldGroup.add(im);
+    flowers.count = nFlowers;
+    group.add(flowers);
   }
 
+  worldGroup.add(group);
+  return { group, cx, cz };
+}
+
+function disposeChunk(ch) {
+  worldGroup.remove(ch.group);
+  ch.group.traverse(obj => {
+    if (obj.geometry) obj.geometry.dispose();
+    // materials are shared — don't dispose
+  });
+}
+
+function ensureVisibleChunks() {
+  const pcx = Math.floor(player.pos.x / CHUNK_SIZE);
+  const pcz = Math.floor(player.pos.z / CHUNK_SIZE);
+  for (let dx = -VIEW_RADIUS; dx <= VIEW_RADIUS; dx++) {
+    for (let dz = -VIEW_RADIUS; dz <= VIEW_RADIUS; dz++) {
+      const k = chunkKey(pcx + dx, pcz + dz);
+      if (!chunks.has(k)) chunks.set(k, buildChunk(pcx + dx, pcz + dz));
+    }
+  }
+  // Free anything too far
+  for (const [k, ch] of chunks) {
+    if (Math.abs(ch.cx - pcx) > VIEW_RADIUS + 1 || Math.abs(ch.cz - pcz) > VIEW_RADIUS + 1) {
+      disposeChunk(ch);
+      chunks.delete(k);
+    }
+  }
+}
+
+function clearAllChunks() {
+  for (const [, ch] of chunks) disposeChunk(ch);
+  chunks.clear();
+}
+
+function buildWorld() {
+  clearAllChunks();
   // Sky tint shifts with level
+  const lvl = worldLevel();
   const skyHues = [0x9fd0ff, 0xb8dcff, 0xffd6a8, 0xffc0cb, 0xc7b6ff, 0x8a7ae8];
   const col = new THREE.Color(skyHues[Math.min(lvl - 1, skyHues.length - 1)]);
   scene.background = col;
   scene.fog.color.copy(col);
+  // Initial ring around current player position
+  ensureVisibleChunks();
 }
 
 // =============================================================================
@@ -295,32 +354,150 @@ const touchInput = {
   sprint: false,
 };
 
-// Simple low-poly character: body capsule + head + arm hint
-{
-  const bodyMat = new THREE.MeshLambertMaterial({ color: 0x4a7fff });
-  const headMat = new THREE.MeshLambertMaterial({ color: 0xffd9a8 });
-  const body = new THREE.Mesh(
-    new THREE.CapsuleGeometry(PLAYER_RADIUS, 1.0, 4, 8),
-    bodyMat,
+// Low-poly lumberjack: checkered shirt, cap, satchel full of berries.
+// No external assets — the shirt pattern is a procedural CanvasTexture.
+function buildLumberjack(group) {
+  // Procedural red-checkered shirt texture
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  const TS = 16;
+  for (let y = 0; y < 4; y++) {
+    for (let x = 0; x < 4; x++) {
+      ctx.fillStyle = ((x + y) & 1) ? '#c4261a' : '#7a0e08';
+      ctx.fillRect(x * TS, y * TS, TS, TS);
+    }
+  }
+  ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    ctx.beginPath(); ctx.moveTo(i * TS, 0);  ctx.lineTo(i * TS, 64); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, i * TS);  ctx.lineTo(64, i * TS); ctx.stroke();
+  }
+  const shirtTex = new THREE.CanvasTexture(canvas);
+  shirtTex.wrapS = shirtTex.wrapT = THREE.RepeatWrapping;
+  shirtTex.repeat.set(2, 1);
+  shirtTex.magFilter = THREE.NearestFilter;
+  shirtTex.minFilter = THREE.NearestFilter;
+
+  const skinMat    = new THREE.MeshLambertMaterial({ color: 0xf2c79a });
+  const pantsMat   = new THREE.MeshLambertMaterial({ color: 0x1e2a3a });
+  const shirtMat   = new THREE.MeshLambertMaterial({ map: shirtTex, color: 0xffffff });
+  const bootsMat   = new THREE.MeshLambertMaterial({ color: 0x3a2010 });
+  const satchelMat = new THREE.MeshLambertMaterial({ color: 0x6a4020 });
+  const berryMat   = new THREE.MeshLambertMaterial({ color: 0xe03a58, emissive: 0x3a0612, emissiveIntensity: 0.4 });
+  const capMat     = new THREE.MeshLambertMaterial({ color: 0xa31414 });
+
+  // Legs
+  const legGeo = new THREE.CylinderGeometry(0.12, 0.12, 0.75, 6);
+  const legL = new THREE.Mesh(legGeo, pantsMat); legL.position.set(-0.13, 0.38, 0);
+  const legR = new THREE.Mesh(legGeo, pantsMat); legR.position.set( 0.13, 0.38, 0);
+  group.add(legL, legR);
+
+  // Boots
+  const bootGeo = new THREE.BoxGeometry(0.28, 0.18, 0.34);
+  const bootL = new THREE.Mesh(bootGeo, bootsMat); bootL.position.set(-0.13, 0.09, 0.03);
+  const bootR = new THREE.Mesh(bootGeo, bootsMat); bootR.position.set( 0.13, 0.09, 0.03);
+  group.add(bootL, bootR);
+
+  // Torso (shirt)
+  const torso = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.3, 0.27, 0.8, 10),
+    shirtMat,
   );
-  body.position.y = 0.9;
-  const head = new THREE.Mesh(
-    new THREE.SphereGeometry(0.28, 12, 8),
-    headMat,
+  torso.position.y = 1.15;
+  group.add(torso);
+
+  // Arms (shirt)
+  const armGeo = new THREE.CylinderGeometry(0.09, 0.09, 0.75, 6);
+  const armL = new THREE.Mesh(armGeo, shirtMat);
+  armL.position.set(-0.4, 1.12, 0);
+  armL.rotation.z = 0.25;
+  const armR = new THREE.Mesh(armGeo, shirtMat);
+  armR.position.set(0.4, 1.12, 0);
+  armR.rotation.z = -0.25;
+  group.add(armL, armR);
+
+  // Hands
+  const handGeo = new THREE.SphereGeometry(0.1, 8, 6);
+  const handL = new THREE.Mesh(handGeo, skinMat); handL.position.set(-0.5, 0.76, 0);
+  const handR = new THREE.Mesh(handGeo, skinMat); handR.position.set( 0.5, 0.76, 0);
+  group.add(handL, handR);
+
+  // Head
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 14, 10), skinMat);
+  head.position.y = 1.78;
+  group.add(head);
+
+  // Beard (small dark cone under the head, optional lumberjack vibe)
+  const beard = new THREE.Mesh(
+    new THREE.ConeGeometry(0.18, 0.22, 8),
+    new THREE.MeshLambertMaterial({ color: 0x3a2a1a }),
   );
-  head.position.y = 1.7;
-  const arm = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.08, 0.08, 0.7, 6),
-    bodyMat,
+  beard.position.set(0, 1.62, 0.12);
+  beard.rotation.x = 0.3;
+  group.add(beard);
+
+  // Cap (cylinder crown + flat brim)
+  const capCrown = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.25, 0.25, 0.14, 14),
+    capMat,
   );
-  arm.position.set(0.35, 1.1, 0.1);
-  arm.rotation.z = -0.5;
-  player.group.add(body, head, arm);
-  scene.add(player.group);
+  capCrown.position.y = 1.97;
+  group.add(capCrown);
+  const capBrim = new THREE.Mesh(
+    new THREE.BoxGeometry(0.42, 0.04, 0.2),
+    capMat,
+  );
+  capBrim.position.set(0, 1.92, 0.22);
+  group.add(capBrim);
+
+  // Satchel on the left hip (strap across torso + pouch)
+  const strap = new THREE.Mesh(
+    new THREE.BoxGeometry(0.06, 0.9, 0.04),
+    satchelMat,
+  );
+  strap.position.set(0.08, 1.18, 0.18);
+  strap.rotation.z = -0.45;
+  group.add(strap);
+  const pouch = new THREE.Mesh(
+    new THREE.BoxGeometry(0.34, 0.26, 0.16),
+    satchelMat,
+  );
+  pouch.position.set(-0.32, 0.88, 0.08);
+  pouch.rotation.y = 0.35;
+  group.add(pouch);
+  // Flap
+  const flap = new THREE.Mesh(
+    new THREE.BoxGeometry(0.34, 0.12, 0.02),
+    satchelMat,
+  );
+  flap.position.set(-0.32, 1.02, 0.17);
+  flap.rotation.y = 0.35;
+  group.add(flap);
+
+  // Berries peeking out of the pouch
+  const berryGeo = new THREE.SphereGeometry(0.065, 8, 6);
+  const berrySpots = [
+    [-0.26, 1.02,  0.17],
+    [-0.34, 1.05,  0.22],
+    [-0.41, 1.02,  0.17],
+    [-0.30, 1.07,  0.12],
+    [-0.38, 1.06,  0.12],
+  ];
+  for (const [x, y, z] of berrySpots) {
+    const b = new THREE.Mesh(berryGeo, berryMat);
+    b.position.set(x, y, z);
+    group.add(b);
+  }
 }
+buildLumberjack(player.group);
+scene.add(player.group);
 
 // Camera follow parameters
-const CAM_DIST   = 6;
+let camDist = 7;
+const CAM_DIST_MIN = 3;
+const CAM_DIST_MAX = 45;
 const CAM_HEIGHT = 2.2;
 const tmpCamPos = new THREE.Vector3();
 const tmpLookAt = new THREE.Vector3();
@@ -390,10 +567,7 @@ function updatePlayer(dt) {
     player.onGround = player.pos.y - footY < 0.05;
   }
 
-  // Keep inside world bounds
-  const bound = WORLD_SIZE * 0.48;
-  player.pos.x = Math.max(-bound, Math.min(bound, player.pos.x));
-  player.pos.z = Math.max(-bound, Math.min(bound, player.pos.z));
+  // No world bounds — the world streams in as the player moves
 
   // Update mesh
   player.group.position.copy(player.pos);
@@ -404,9 +578,9 @@ function updatePlayer(dt) {
   const cp = Math.cos(player.pitch), sp = Math.sin(player.pitch);
   const cy = Math.cos(player.yaw),   sy = Math.sin(player.yaw);
   tmpCamPos.set(
-    player.pos.x + CAM_DIST * cp * sy,
-    player.pos.y + CAM_HEIGHT + CAM_DIST * sp,
-    player.pos.z + CAM_DIST * cp * cy,
+    player.pos.x + camDist * cp * sy,
+    player.pos.y + CAM_HEIGHT + camDist * sp,
+    player.pos.z + camDist * cp * cy,
   );
   // Prevent camera from going below terrain
   const camGround = terrainHeight(tmpCamPos.x, tmpCamPos.z, seed, lvl) + 1.2;
@@ -516,13 +690,13 @@ class Bird {
   }
 }
 
+const BIRD_SPAWN_R = 90; // spawn birds around the player in a ring
 function spawnBird() {
   if (birds.length >= MAX_BIRDS) return;
-  // Spawn near edges at a safe altitude
   const angle = Math.random() * Math.PI * 2;
-  const r = WORLD_SIZE * 0.35;
-  const x = Math.cos(angle) * r;
-  const z = Math.sin(angle) * r;
+  const r = 40 + Math.random() * BIRD_SPAWN_R;
+  const x = player.pos.x + Math.cos(angle) * r;
+  const z = player.pos.z + Math.sin(angle) * r;
   const h = terrainHeight(x, z, save.worldSeed, worldLevel()) + 20 + Math.random() * 15;
   birds.push(new Bird(new THREE.Vector3(x, h, z)));
 }
@@ -622,12 +796,15 @@ function updateBirds(dt) {
     if (b.pos.y < minY + 5) tmpGround.y += (minY + 5 - b.pos.y) * 3;
     if (b.pos.y > maxY)     tmpGround.y -= (b.pos.y - maxY) * 3;
 
-    // Soft world bounds
-    const bound = WORLD_SIZE * 0.48;
-    if (b.pos.x >  bound) tmpGround.x -= (b.pos.x -  bound) * 2;
-    if (b.pos.x < -bound) tmpGround.x += (-bound - b.pos.x) * 2;
-    if (b.pos.z >  bound) tmpGround.z -= (b.pos.z -  bound) * 2;
-    if (b.pos.z < -bound) tmpGround.z += (-bound - b.pos.z) * 2;
+    // Soft bounds relative to the player (keep birds in a bubble around them
+    // — the world is infinite but we don't want flocks straying off forever)
+    const bubbleR = 180;
+    const bx = b.pos.x - player.pos.x;
+    const bz = b.pos.z - player.pos.z;
+    if (bx >  bubbleR) tmpGround.x -= (bx -  bubbleR) * 2;
+    if (bx < -bubbleR) tmpGround.x += (-bubbleR - bx) * 2;
+    if (bz >  bubbleR) tmpGround.z -= (bz -  bubbleR) * 2;
+    if (bz < -bubbleR) tmpGround.z += (-bubbleR - bz) * 2;
 
     // Wander (smooth pseudo-random drift)
     tmpWander.set(
@@ -802,45 +979,73 @@ canvas.addEventListener('contextmenu', e => e.preventDefault());
 const isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
 if (isTouch) document.body.classList.add('touch');
 
-// --- Drag-to-look on the canvas (works for mouse + touch via PointerEvent) ---
-let lookPointerId = null;
-let lookLastX = 0, lookLastY = 0;
-let lookMoved = false;
+// --- Multi-pointer input: 1 finger / mouse = drag-to-look, 2 fingers = pinch-zoom ---
+const activePointers = new Map(); // pointerId -> { x, y, type }
+let pinchActive = false;
+let pinchStartDist = 0;
+let pinchStartCam = 0;
+let singleTouchMoved = false;
 
 canvas.addEventListener('pointerdown', e => {
-  // Ignore if the pointer already started on a UI element (joystick, buttons)
   if (e.target !== canvas) return;
-  if (lookPointerId !== null) return;
-  lookPointerId = e.pointerId;
-  lookLastX = e.clientX;
-  lookLastY = e.clientY;
-  lookMoved = false;
+  activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
   canvas.setPointerCapture?.(e.pointerId);
+  if (activePointers.size === 1) {
+    singleTouchMoved = false;
+  } else if (activePointers.size === 2) {
+    const pts = Array.from(activePointers.values());
+    pinchStartDist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+    pinchStartCam = camDist;
+    pinchActive = true;
+  }
 });
 
 canvas.addEventListener('pointermove', e => {
-  if (e.pointerId !== lookPointerId) return;
-  const dx = e.clientX - lookLastX;
-  const dy = e.clientY - lookLastY;
-  lookLastX = e.clientX;
-  lookLastY = e.clientY;
-  if (Math.abs(dx) + Math.abs(dy) > 3) lookMoved = true;
-  player.yaw   -= dx * 0.005;
-  player.pitch -= dy * 0.005;
-  player.pitch = Math.max(-0.6, Math.min(1.0, player.pitch));
+  const p = activePointers.get(e.pointerId);
+  if (!p) return;
+  const prevX = p.x, prevY = p.y;
+  p.x = e.clientX;
+  p.y = e.clientY;
+
+  if (pinchActive && activePointers.size >= 2) {
+    const pts = Array.from(activePointers.values());
+    const d = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+    if (pinchStartDist > 1) {
+      // Spread fingers => zoom in (smaller distance), pinch => zoom out
+      camDist = Math.max(CAM_DIST_MIN, Math.min(CAM_DIST_MAX, pinchStartCam * (pinchStartDist / d)));
+    }
+    return;
+  }
+
+  if (activePointers.size === 1) {
+    const dx = e.clientX - prevX;
+    const dy = e.clientY - prevY;
+    if (Math.abs(dx) + Math.abs(dy) > 3) singleTouchMoved = true;
+    player.yaw   -= dx * 0.005;
+    player.pitch -= dy * 0.005;
+    player.pitch = Math.max(-0.6, Math.min(1.0, player.pitch));
+  }
 });
 
-function endLook(e) {
-  if (e.pointerId !== lookPointerId) return;
+function endCanvasPointer(e) {
+  if (!activePointers.has(e.pointerId)) return;
+  const p = activePointers.get(e.pointerId);
+  activePointers.delete(e.pointerId);
   canvas.releasePointerCapture?.(e.pointerId);
-  // Quick tap (no drag) drops food — convenient on desktop
-  if (!lookMoved && e.pointerType !== 'touch') {
+  if (activePointers.size < 2) pinchActive = false;
+  // Quick tap (no drag) drops food — mouse only (touch users use the Feed button)
+  if (activePointers.size === 0 && !singleTouchMoved && p.type !== 'touch') {
     dropFoodAtPlayer();
   }
-  lookPointerId = null;
 }
-canvas.addEventListener('pointerup', endLook);
-canvas.addEventListener('pointercancel', endLook);
+canvas.addEventListener('pointerup',     endCanvasPointer);
+canvas.addEventListener('pointercancel', endCanvasPointer);
+
+// Mouse wheel = zoom on desktop
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  camDist = Math.max(CAM_DIST_MIN, Math.min(CAM_DIST_MAX, camDist * (1 + Math.sign(e.deltaY) * 0.12)));
+}, { passive: false });
 
 // --- Virtual joystick ---
 const joy    = document.getElementById('joystick');
@@ -916,6 +1121,7 @@ function loop() {
   lastT = now;
 
   updatePlayer(dt);
+  ensureVisibleChunks();
   updateBirds(dt);
   updateFoods(dt);
   renderBirds();
