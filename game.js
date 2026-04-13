@@ -1189,7 +1189,28 @@ function buildLumberjack(group) {
   handAxe.visible = false;
   armR.wrist.add(handAxe);
 
-  return { legL, legR, armL, armR, torso, neck, headPivot, backAxe, handAxe };
+  // --- Surfboard — appears under the feet when the player is swimming ---
+  const boardMat = new THREE.MeshStandardMaterial({ color: 0xf2d49a, roughness: 0.55 });
+  const stripeMat = new THREE.MeshStandardMaterial({ color: 0xc44a4a, roughness: 0.6 });
+  const surfboard = new THREE.Group();
+  const board = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.08, 2.0), boardMat);
+  board.position.y = 0;
+  surfboard.add(board);
+  // Round the tip by adding a small tapered cylinder at the front
+  const nose = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.35, 0.4, 12, 1, false, 0, Math.PI), boardMat);
+  nose.rotation.x = Math.PI / 2;
+  nose.rotation.z = Math.PI;
+  nose.position.set(0, 0, -1.1);
+  surfboard.add(nose);
+  // Red center stripe for flavor
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.09, 1.8), stripeMat);
+  stripe.position.y = 0.01;
+  surfboard.add(stripe);
+  surfboard.position.y = -0.03;
+  surfboard.visible = false;
+  group.add(surfboard);
+
+  return { legL, legR, armL, armR, torso, neck, headPivot, backAxe, handAxe, surfboard };
 }
 player.parts = buildLumberjack(player.group);
 player.walkPhase = 0;
@@ -1219,10 +1240,11 @@ function updatePlayer(dt) {
   const seed = save.worldSeed;
   const lvl = worldLevel();
 
-  // Apply look joystick (mobile) to yaw / pitch
+  // Apply look joystick (mobile) to yaw / pitch — low sensitivity so the
+  // camera feels stable on the thumb.
   if (touchInput.lookX || touchInput.lookY) {
-    player.yaw   -= touchInput.lookX * dt * 2.4;
-    player.pitch -= touchInput.lookY * dt * 2.0;
+    player.yaw   -= touchInput.lookX * dt * 1.4;
+    player.pitch -= touchInput.lookY * dt * 1.1;
     player.pitch = Math.max(-0.6, Math.min(1.0, player.pitch));
   }
 
@@ -1367,50 +1389,71 @@ function updatePlayer(dt) {
   // Whole-body bob up/down (2× phase since each step contributes a bob)
   player.group.position.y += Math.abs(sinP2) * 0.06 * moving;
 
-  // --- Swimming override: breaststroke-ish pose ---
+  // --- Swimming → standing on a surfboard ---
+  // The walk animation already leaves the character upright when the
+  // player isn't moving horizontally; when swimming we just show the
+  // surfboard under the feet and freeze the legs into a 'surfer stance'
+  // with a slight knee bend for stability.
   if (player.swimming) {
-    // Torso leans forward (prone)
-    player.parts.torso.rotation.x = -0.8;
-    player.parts.neck.rotation.x = 0.3; // head looks forward
-    // Legs extended behind, kicking
-    const kick = sinP * 0.35;
-    player.parts.legL.hip.rotation.x = -0.7 + kick;
-    player.parts.legR.hip.rotation.x = -0.7 - kick;
-    player.parts.legL.knee.rotation.x = Math.max(0, -kick * 1.5);
-    player.parts.legR.knee.rotation.x = Math.max(0,  kick * 1.5);
-    player.parts.legL.ankle.rotation.x = -0.2;
-    player.parts.legR.ankle.rotation.x = -0.2;
-    // Arms do a breaststroke circle: forward, out, back
-    const stroke = (Math.sin(player.walkPhase) + 1) * 0.5; // 0..1
-    player.parts.armL.shoulder.rotation.x = -1.4 + stroke * 0.8;
-    player.parts.armR.shoulder.rotation.x = -1.4 + stroke * 0.8;
-    player.parts.armL.shoulder.rotation.z =  0.4 + stroke * 0.4;
-    player.parts.armR.shoulder.rotation.z = -0.4 - stroke * 0.4;
-    player.parts.armL.elbow.rotation.x = -0.3 - stroke * 0.6;
-    player.parts.armR.elbow.rotation.x = -0.3 - stroke * 0.6;
-    player.parts.armL.wrist.rotation.x = 0;
-    player.parts.armR.wrist.rotation.x = 0;
+    player.parts.surfboard.visible = true;
+    player.parts.legL.hip.rotation.x = 0;
+    player.parts.legR.hip.rotation.x = 0;
+    player.parts.legL.knee.rotation.x = 0.25;
+    player.parts.legR.knee.rotation.x = 0.25;
+    player.parts.legL.ankle.rotation.x = -0.1;
+    player.parts.legR.ankle.rotation.x = -0.1;
+    // Arms slightly out for balance
+    player.parts.armL.shoulder.rotation.x = 0;
+    player.parts.armR.shoulder.rotation.x = 0;
+    player.parts.armL.shoulder.rotation.z =  0.55;
+    player.parts.armR.shoulder.rotation.z = -0.55;
+    player.parts.armL.elbow.rotation.x = 0;
+    player.parts.armR.elbow.rotation.x = 0;
+    player.parts.torso.rotation.x = 0;
+    player.parts.torso.rotation.y = 0;
+    player.parts.torso.rotation.z = 0;
+    // Subtle balance bob on the board
+    player.group.position.y += Math.sin(performance.now() * 0.003) * 0.03;
+  } else {
+    player.parts.surfboard.visible = false;
   }
 
   // --- Axe swing override for gathering ---
-  // While axeSwing is positive, the right arm is driven manually through a
-  // quick chop arc instead of following the walk cycle, and the hand axe
-  // takes the place of the back axe for the duration.
+  // 3-phase chop: wind-up (rest → up-back), slam (up-back → forward-down),
+  // follow-through (forward-down → rest). Positive shoulder.rotation.x in
+  // Three.js swings the arm toward -Z (the character's forward side), so
+  // the slam ends with the axe pointed at whatever is in front of the
+  // lumberjack, not toward the camera.
   if (player.axeSwing > 0) {
     player.axeSwing = Math.max(0, player.axeSwing - dt);
     player.parts.backAxe.visible = false;
     player.parts.handAxe.visible = true;
     const t = 1 - player.axeSwing / 0.55;
-    const chop = t < 0.35
-      ? (t / 0.35) * 0.8
-      : 1 - ((t - 0.35) / 0.65);
-    const shoulderX = 0.6 - chop * 2.4;
-    const elbowX    = -0.4 - chop * 1.2;
+    let shoulderX, elbowX;
+    if (t < 0.3) {
+      // Wind-up: rest → up-back (shoulder very negative)
+      const k = t / 0.3;
+      shoulderX = -2.5 * k;
+      elbowX    = -1.8 * k;
+    } else if (t < 0.65) {
+      // Slam: up-back → forward-down (shoulder goes positive)
+      const k = (t - 0.3) / 0.35;
+      shoulderX = -2.5 + 4.5 * k;   // -2.5 → +2.0
+      elbowX    = -1.8 + 1.6 * k;   // -1.8 → -0.2
+    } else {
+      // Follow-through: forward-down → rest
+      const k = (t - 0.65) / 0.35;
+      shoulderX = 2.0 * (1 - k);
+      elbowX    = -0.2 * (1 - k);
+    }
     player.parts.armR.shoulder.rotation.x = shoulderX;
     player.parts.armR.shoulder.rotation.z = -0.15;
-    player.parts.armR.elbow.rotation.x = elbowX;
-    player.parts.armR.wrist.rotation.x = 0;
-    player.parts.torso.rotation.x += -chop * 0.15;
+    player.parts.armR.elbow.rotation.x    = elbowX;
+    player.parts.armR.wrist.rotation.x    = 0;
+    // Torso leans forward slightly during the slam phase only
+    if (t >= 0.3 && t < 0.65) {
+      player.parts.torso.rotation.x += -0.2;
+    }
   } else {
     player.parts.backAxe.visible = true;
     player.parts.handAxe.visible = false;
