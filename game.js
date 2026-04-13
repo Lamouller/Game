@@ -282,15 +282,16 @@ const BIOMES = [
 ];
 
 function biomeAt(x, z, seed) {
-  // Low-frequency "humidity" & "temperature" fields
-  const h = fbm(x * 0.0028, z * 0.0028, seed + 7001, 2);
-  const t = fbm(x * 0.0022, z * 0.0022, seed + 9103, 2);
-  // Pick by regions of (h, t) space
-  if (h > 0.70)            return BIOMES[1]; // cimes (high)
-  if (h > 0.55 && t > 0.60) return BIOMES[5]; // dorées (warm mid-high)
-  if (h < 0.35 && t > 0.55) return BIOMES[2]; // désert (low, warm)
-  if (h < 0.40 && t < 0.45) return BIOMES[3]; // marais (low, cool)
-  if (t < 0.30)             return BIOMES[4]; // forêt (cold-mid)
+  // Higher frequency (0.0028 → 0.005) so biome regions are ~150 units wide
+  // instead of ~350 — the player encounters new biomes within a short walk.
+  const h = fbm(x * 0.0050, z * 0.0050, seed + 7001, 2);
+  const t = fbm(x * 0.0042, z * 0.0042, seed + 9103, 2);
+  // Loosened thresholds so each biome covers a meaningful share of the map
+  if (h > 0.62)             return BIOMES[1]; // cimes (snow)
+  if (h > 0.50 && t > 0.55) return BIOMES[5]; // dorées (warm mid-high)
+  if (h < 0.42 && t > 0.55) return BIOMES[2]; // désert (low, warm)
+  if (h < 0.45 && t < 0.45) return BIOMES[3]; // marais (low, cool)
+  if (t < 0.32)             return BIOMES[4]; // forêt (cold-mid)
   return BIOMES[0];                           // clairière (default)
 }
 
@@ -446,11 +447,43 @@ function clearAllChunks() {
 function buildWorld() {
   clearAllChunks();
   if (typeof clearAllVillages === 'function') clearAllVillages();
+  if (typeof clearAllPlants   === 'function') clearAllPlants();
   // Initial ring around current player position
   ensureVisibleChunks();
   // Force biome banner to re-trigger on next frame
   currentBiomeId = null;
 }
+
+// =============================================================================
+// Water plane — a large semi-transparent disc at sea level that follows the
+// player so the world "has" lakes/oceans wherever the terrain dips below it.
+// =============================================================================
+const WATER_LEVEL = -1.5;
+const WATER_SIZE = 900;
+let waterMesh = null;
+function buildWaterPlane() {
+  const geo = new THREE.PlaneGeometry(WATER_SIZE, WATER_SIZE, 1, 1);
+  geo.rotateX(-Math.PI / 2);
+  const mat = new THREE.MeshLambertMaterial({
+    color: 0x2978b8,
+    transparent: true,
+    opacity: 0.82,
+    depthWrite: false,
+  });
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.position.y = WATER_LEVEL;
+  mesh.renderOrder = 1;
+  scene.add(mesh);
+  return mesh;
+}
+function updateWater(dt) {
+  if (!waterMesh) return;
+  waterMesh.position.x = player.pos.x;
+  waterMesh.position.z = player.pos.z;
+  // Gentle vertical bob to fake waves
+  waterMesh.position.y = WATER_LEVEL + Math.sin(performance.now() * 0.001) * 0.05;
+}
+waterMesh = buildWaterPlane();
 
 // --- Biome tracking: updates sky/fog and shows a "zone entered" banner ---
 let currentBiomeId = null;
@@ -483,8 +516,8 @@ function updateBiomeTracking(dt) {
 // =============================================================================
 // Villages (procedural, deterministic, streamed like chunks)
 // =============================================================================
-const VILLAGE_GRID = 480;   // world units per village grid cell
-const VILLAGE_VIEW = 1;     // 3x3 cells scanned around player
+const VILLAGE_GRID = 280;   // world units per village grid cell (smaller -> denser)
+const VILLAGE_VIEW = 2;     // 5x5 cells scanned around player
 const villages = new Map(); // "vgx,vgz" -> { group, worldX, worldZ, npcs, key } | null
 
 // Shared materials for village props
@@ -502,9 +535,10 @@ const NPC_NAMES = [
 ];
 
 function hasVillageAt(vgx, vgz, seed) {
-  // Use a large stride hash so villages feel rare
+  // Guaranteed starter village at the world origin
+  if (vgx === 0 && vgz === 0) return true;
   const r = hash2(vgx * 91, vgz * 73, seed + 4242);
-  return r > 0.58;
+  return r > 0.42; // ~58% of cells have a village
 }
 
 function villagePosForCell(vgx, vgz, seed) {
@@ -1221,6 +1255,9 @@ class Bird {
     this.scale = 0.8 + Math.random() * 0.3;
     this.color = new THREE.Color().setHSL(Math.random(), 0.55, 0.55);
     this.phase = Math.random() * Math.PI * 2;
+    // --- Pollination state ---
+    this.chargeTier = 0;   // tier of the food last eaten (drives plant rarity)
+    this.chargeLeft = 0;   // seconds of charge remaining; plant drops when this hits 0 from positive
   }
 }
 
@@ -1371,6 +1408,9 @@ function updateBirds(dt) {
       b.energy += best.energy * 10;
       gainXp(best.energy);
       questEvent('feed');
+      // --- Pollination: the bird is now "charged" with this tier's seed ---
+      b.chargeTier = best.tier;
+      b.chargeLeft = 6 + best.tier * 2; // higher tier = carries the seed longer
       // remove food
       const idx = foods.indexOf(best);
       if (idx !== -1) {
@@ -1387,8 +1427,124 @@ function updateBirds(dt) {
       }
     }
 
+    // Pollination tick — the charge counts down while flying. When it runs
+    // out, the bird drops a seed somewhere below it which will grow into
+    // a plant over a few seconds.
+    if (b.chargeLeft > 0) {
+      const prev = b.chargeLeft;
+      b.chargeLeft -= dt;
+      if (b.chargeLeft <= 0) {
+        plantSeedBelowBird(b);
+        b.chargeLeft = 0;
+      }
+    }
+
     if (b.energy < 0) b.energy = 0;
   }
+}
+
+// =============================================================================
+// Pollination — charged birds drop seeds, seeds grow into plants
+// =============================================================================
+const plants = []; // { mesh, grow, target, kind, pos }
+const MAX_PLANTS = 400;
+const PLANT_CULL_DIST = 260;
+
+// Shared plant materials / geometries (allocated once)
+const seedFlowerGeo = new THREE.ConeGeometry(0.22, 0.7, 5);
+seedFlowerGeo.translate(0, 0.35, 0);
+const seedBushGeo = new THREE.SphereGeometry(0.45, 8, 6);
+seedBushGeo.translate(0, 0.45, 0);
+const seedTreeLeavesGeo = new THREE.ConeGeometry(1.2, 3.6, 6);
+seedTreeLeavesGeo.translate(0, 2.6, 0);
+const seedTreeTrunkGeo = new THREE.CylinderGeometry(0.2, 0.3, 1.0, 5);
+seedTreeTrunkGeo.translate(0, 0.5, 0);
+const seedGlowGeo = new THREE.ConeGeometry(0.4, 1.4, 6);
+seedGlowGeo.translate(0, 0.7, 0);
+const seedMythicGeo = new THREE.IcosahedronGeometry(0.7, 0);
+seedMythicGeo.translate(0, 0.8, 0);
+
+const plantKinds = [
+  // tier 0 — Graine → petite fleur jaune
+  { name: 'fleur', geos: [seedFlowerGeo], colors: [0xffe45a], emissive: 0x000000, scale: 1 },
+  // tier 1 — Baie → buisson rouge
+  { name: 'buisson', geos: [seedBushGeo], colors: [0xc4301a], emissive: 0x1a0600, scale: 1.1 },
+  // tier 2 — Ver → arbuste vert (cone + trunk)
+  { name: 'arbuste', geos: [seedTreeTrunkGeo, seedTreeLeavesGeo], colors: [0x5a3a22, 0x4fa442], emissive: 0x001a00, scale: 0.8 },
+  // tier 3 — Nectar → fleur luminescente
+  { name: 'nectar', geos: [seedGlowGeo], colors: [0x7affcf], emissive: 0x20704a, scale: 1.2 },
+  // tier 4 — Essence → gemme mythique
+  { name: 'mythique', geos: [seedMythicGeo], colors: [0xb68cff], emissive: 0x30106a, scale: 1.5 },
+];
+
+function plantSeedBelowBird(b) {
+  if (plants.length >= MAX_PLANTS) return;
+  const kind = plantKinds[Math.min(b.chargeTier, plantKinds.length - 1)];
+  const seed = save.worldSeed;
+  const lvl = worldLevel();
+  // Plant is dropped slightly forward of the bird's velocity, on the ground
+  const dir = new THREE.Vector3().copy(b.vel).normalize();
+  const x = b.pos.x + dir.x * 2;
+  const z = b.pos.z + dir.z * 2;
+  const y = terrainHeight(x, z, seed, lvl);
+  // Don't bother seeding in water / deep sand
+  if (y < -1) return;
+
+  const group = new THREE.Group();
+  for (let i = 0; i < kind.geos.length; i++) {
+    const mat = new THREE.MeshLambertMaterial({
+      color: kind.colors[i] || kind.colors[0],
+      emissive: kind.emissive,
+      emissiveIntensity: kind.emissive ? 0.6 : 0,
+    });
+    const mesh = new THREE.Mesh(kind.geos[i], mat);
+    group.add(mesh);
+  }
+  group.position.set(x, y, z);
+  group.scale.setScalar(0.001);
+  scene.add(group);
+  plants.push({
+    mesh: group,
+    grow: 0,
+    target: kind.scale,
+    tier: b.chargeTier,
+    pos: new THREE.Vector3(x, y, z),
+  });
+  // Little sparkle XP reward to the player for having made it grow
+  gainXp(1 + b.chargeTier);
+  // Show a floating "+1 🌱" type indicator at the plant position (optional)
+}
+
+function updatePlants(dt) {
+  // Animate growth & cull plants that are too far
+  const px = player.pos.x, pz = player.pos.z;
+  for (let i = plants.length - 1; i >= 0; i--) {
+    const p = plants[i];
+    if (p.grow < 1) {
+      p.grow = Math.min(1, p.grow + dt * 0.45);
+      p.mesh.scale.setScalar(Math.max(0.001, p.grow * p.target));
+    }
+    // Cull distant plants to keep memory bounded
+    const dx = p.pos.x - px, dz = p.pos.z - pz;
+    if (dx * dx + dz * dz > PLANT_CULL_DIST * PLANT_CULL_DIST) {
+      scene.remove(p.mesh);
+      p.mesh.traverse(obj => {
+        if (obj.geometry && !plantKinds.some(k => k.geos.includes(obj.geometry))) obj.geometry.dispose();
+        if (obj.material) obj.material.dispose();
+      });
+      plants.splice(i, 1);
+    }
+  }
+}
+
+function clearAllPlants() {
+  for (const p of plants) {
+    scene.remove(p.mesh);
+    p.mesh.traverse(obj => {
+      if (obj.material) obj.material.dispose();
+    });
+  }
+  plants.length = 0;
 }
 
 function renderBirds() {
@@ -1641,10 +1797,26 @@ function showToast(html) {
   toastTimer = setTimeout(() => $toast.classList.add('hidden'), 3200);
 }
 
+// Floating "+X ◈" element that rises + fades away. Spawned next to the
+// screen center so it's readable no matter where the player is looking.
+function spawnFloatingNumber(text) {
+  const el = document.createElement('div');
+  el.className = 'floatXp';
+  el.textContent = text;
+  // Small random horizontal jitter so bursts don't stack perfectly
+  el.style.left = (50 + (Math.random() - 0.5) * 6) + '%';
+  el.style.top  = '52%';
+  document.body.appendChild(el);
+  // Remove after the CSS animation finishes
+  setTimeout(() => el.remove(), 1400);
+}
+
 let lastLevel = worldLevel();
 function gainXp(amount) {
   const before = save.xp;
   save.xp += amount;
+  // Floating "+X ◈" number on screen near the center
+  spawnFloatingNumber('+' + Math.round(amount) + ' ◈');
   // Check food unlocks
   for (let i = 0; i < FOODS.length; i++) {
     if (before < FOODS[i].unlock && save.xp >= FOODS[i].unlock) {
@@ -1889,6 +2061,8 @@ function loop() {
   try { updateBiomeTracking(dt); } catch (e) { logOnce('updateBiomeTracking', e); }
   try { updateBirds(dt); }        catch (e) { logOnce('updateBirds', e); }
   try { updateFoods(dt); }        catch (e) { logOnce('updateFoods', e); }
+  try { updatePlants(dt); }       catch (e) { logOnce('updatePlants', e); }
+  try { updateWater(dt); }        catch (e) { logOnce('updateWater', e); }
   try { renderBirds(); }          catch (e) { logOnce('renderBirds', e); }
   try { updateInteraction(); }    catch (e) { logOnce('updateInteraction', e); }
   try { updateQuestDistances(); } catch (e) { logOnce('updateQuestDistances', e); }
