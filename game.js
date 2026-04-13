@@ -1050,21 +1050,36 @@ function buildLumberjack(group) {
   head.position.y = 0.18;
   headPivot.add(head);
 
-  // Big bushy beard wrapping the lower half of the head
+  // Big bushy LONG beard — wrapped in a pivot group so we can swing it in
+  // the wind while surfing. Pivot at the chin so the beard flares from
+  // there when rotated.
+  const beardPivot = new THREE.Group();
+  beardPivot.position.set(0, 0.02, -0.05); // under the chin
+  headPivot.add(beardPivot);
   const beardCore = new THREE.Mesh(
     new THREE.SphereGeometry(0.28, 26, 20, 0, Math.PI * 2, Math.PI / 3, Math.PI),
     hairMat,
   );
-  beardCore.scale.set(1.2, 1.65, 1.15);
-  beardCore.position.set(0, -0.05, -0.02);
-  headPivot.add(beardCore);
-  // Side fluff
+  // Much longer beard: y scale bumped from 1.65 to 2.6 and the whole thing
+  // pushed down a bit so it hangs from the chin
+  beardCore.scale.set(1.25, 2.6, 1.18);
+  beardCore.position.set(0, -0.22, 0);
+  beardPivot.add(beardCore);
+  // Side fluff — longer too, hanging down the sides of the jaw
   for (const sx of [-0.2, 0.2]) {
     const side = new THREE.Mesh(new THREE.SphereGeometry(0.17, 18, 14), hairMat);
-    side.scale.set(0.9, 1.25, 0.9);
-    side.position.set(sx, 0, -0.03);
-    headPivot.add(side);
+    side.scale.set(0.95, 2.0, 0.95);
+    side.position.set(sx, -0.18, 0.02);
+    beardPivot.add(side);
   }
+  // Pointed beard tip — extends the bottom even further
+  const beardTip = new THREE.Mesh(
+    new THREE.SphereGeometry(0.14, 14, 10),
+    hairMat,
+  );
+  beardTip.scale.set(0.85, 1.4, 0.9);
+  beardTip.position.set(0, -0.58, 0.02);
+  beardPivot.add(beardTip);
   // Moustache
   const moustache = new THREE.Mesh(new THREE.SphereGeometry(0.13, 16, 12), hairMat);
   moustache.scale.set(1.45, 0.5, 0.7);
@@ -1210,7 +1225,7 @@ function buildLumberjack(group) {
   surfboard.visible = false;
   group.add(surfboard);
 
-  return { legL, legR, armL, armR, torso, neck, headPivot, backAxe, handAxe, surfboard };
+  return { legL, legR, armL, armR, torso, neck, headPivot, beardPivot, backAxe, handAxe, surfboard };
 }
 player.parts = buildLumberjack(player.group);
 player.walkPhase = 0;
@@ -1389,11 +1404,25 @@ function updatePlayer(dt) {
   // Whole-body bob up/down (2× phase since each step contributes a bob)
   player.group.position.y += Math.abs(sinP2) * 0.06 * moving;
 
-  // --- Swimming → standing on a surfboard ---
-  // The walk animation already leaves the character upright when the
-  // player isn't moving horizontally; when swimming we just show the
-  // surfboard under the feet and freeze the legs into a 'surfer stance'
-  // with a slight knee bend for stability.
+  // --- Idle rest pose: right hand on the hip, left arm forward ---
+  // Applied when the player isn't moving, swimming or chopping. Uses a
+  // simple lerp toward the rest angles so the transition from walking
+  // stays smooth.
+  if (!moving && !player.swimming && player.axeSwing <= 0) {
+    const a = player.parts;
+    // Right arm — hand on the hip (arm tucked inward, elbow bent forward)
+    a.armR.shoulder.rotation.x = THREE.MathUtils.lerp(a.armR.shoulder.rotation.x, 0.15,  0.18);
+    a.armR.shoulder.rotation.z = THREE.MathUtils.lerp(a.armR.shoulder.rotation.z, -0.55, 0.18);
+    a.armR.elbow.rotation.x    = THREE.MathUtils.lerp(a.armR.elbow.rotation.x,    1.55,  0.18);
+    a.armR.wrist.rotation.x    = THREE.MathUtils.lerp(a.armR.wrist.rotation.x,    0,     0.18);
+    // Left arm — extended forward (like he's pointing at something ahead)
+    a.armL.shoulder.rotation.x = THREE.MathUtils.lerp(a.armL.shoulder.rotation.x, 1.1,   0.18);
+    a.armL.shoulder.rotation.z = THREE.MathUtils.lerp(a.armL.shoulder.rotation.z, 0.25,  0.18);
+    a.armL.elbow.rotation.x    = THREE.MathUtils.lerp(a.armL.elbow.rotation.x,   -0.35,  0.18);
+    a.armL.wrist.rotation.x    = THREE.MathUtils.lerp(a.armL.wrist.rotation.x,    0,     0.18);
+  }
+
+  // --- Swimming → standing on a surfboard + beard in the wind ---
   if (player.swimming) {
     player.parts.surfboard.visible = true;
     player.parts.legL.hip.rotation.x = 0;
@@ -1414,8 +1443,18 @@ function updatePlayer(dt) {
     player.parts.torso.rotation.z = 0;
     // Subtle balance bob on the board
     player.group.position.y += Math.sin(performance.now() * 0.003) * 0.03;
+    // --- Beard in the wind: blow it backward + gentle wobble ---
+    // +Z is the back of the character (forward is -Z), so we rotate the
+    // beardPivot by a POSITIVE X angle to swing its tip toward +Z (behind
+    // the chin) as if the wind were coming at the surfer's face.
+    const wobble = Math.sin(performance.now() * 0.008) * 0.12;
+    player.parts.beardPivot.rotation.x = 0.9 + wobble;
+    player.parts.beardPivot.rotation.z = Math.sin(performance.now() * 0.006) * 0.15;
   } else {
     player.parts.surfboard.visible = false;
+    // Ease the beard back to rest hanging straight down
+    player.parts.beardPivot.rotation.x = THREE.MathUtils.lerp(player.parts.beardPivot.rotation.x, 0, 0.12);
+    player.parts.beardPivot.rotation.z = THREE.MathUtils.lerp(player.parts.beardPivot.rotation.z, 0, 0.12);
   }
 
   // --- Axe swing override for gathering ---
