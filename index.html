@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
 <title>Birdlife — Whispering Woods</title>
-<link rel="stylesheet" href="style.css?v=8" />
+<link rel="stylesheet" href="style.css?v=9" />
 </head>
 <body>
 <div id="app">
@@ -97,6 +97,17 @@
     </div>
   </div>
 
+  <div id="atlasPanel" class="bigPanel hidden">
+    <div class="panel">
+      <div class="dialog-header">
+        <div>🐦 Atlas des espèces</div>
+        <button class="dialog-close-btn" data-close="atlasPanel">×</button>
+      </div>
+      <div id="atlasGrid"></div>
+      <div class="panel-hint">Nourris des oiseaux de couleurs différentes pour enrichir l'atlas.</div>
+    </div>
+  </div>
+
   <div id="joystick">
     <div id="joystickThumb"></div>
   </div>
@@ -120,6 +131,6 @@
   }
 }
 </script>
-<script type="module" src="game.js?v=8"></script>
+<script type="module" src="game.js?v=9"></script>
 </body>
 </html>

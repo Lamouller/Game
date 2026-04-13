@@ -471,6 +471,43 @@ body.touch .desktop-only { display: none; }
   background: #0b1422;
 }
 
+/* Species atlas grid */
+#atlasGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+  min-width: 480px;
+  max-width: 640px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+.atlasCard {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(140, 200, 255, 0.2);
+  border-radius: 10px;
+  padding: 14px 10px 10px 10px;
+  text-align: center;
+}
+.atlasDot {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  margin: 0 auto 8px auto;
+}
+.atlasName {
+  font-size: 12px;
+  font-weight: 600;
+  color: #ffe99a;
+  margin-bottom: 3px;
+  line-height: 1.25;
+}
+.atlasCount {
+  font-size: 11px;
+  opacity: 0.65;
+  font-variant-numeric: tabular-nums;
+}
+#atlasGrid .empty-note { opacity: 0.5; font-style: italic; grid-column: 1 / -1; text-align: center; padding: 18px; }
+
 /* Floating XP numbers */
 .floatXp {
   position: fixed;
