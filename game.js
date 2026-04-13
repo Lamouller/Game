@@ -68,8 +68,10 @@ camera.lookAt(0, 0, 0);
 const sun = new THREE.DirectionalLight(0xfff0d0, 1.0);
 sun.position.set(80, 140, 40);
 scene.add(sun);
-scene.add(new THREE.HemisphereLight(0xbfe0ff, 0x4a3a2a, 0.55));
-scene.add(new THREE.AmbientLight(0xffffff, 0.18));
+const hemi = new THREE.HemisphereLight(0xbfe0ff, 0x4a3a2a, 0.55);
+scene.add(hemi);
+const ambient = new THREE.AmbientLight(0xffffff, 0.18);
+scene.add(ambient);
 
 function onResize() {
   const w = window.innerWidth, h = window.innerHeight;
@@ -485,17 +487,13 @@ function updateWater(dt) {
 }
 waterMesh = buildWaterPlane();
 
-// --- Biome tracking: updates sky/fog and shows a "zone entered" banner ---
+// --- Biome tracking: shows a "zone entered" banner (sky/fog handled by updateDayNight) ---
 let currentBiomeId = null;
 let biomeBannerTimer = 0;
 function updateBiomeTracking(dt) {
   const b = biomeAt(player.pos.x, player.pos.z, save.worldSeed);
   if (b.id !== currentBiomeId) {
     currentBiomeId = b.id;
-    // Update sky & fog color smoothly on change
-    scene.background = new THREE.Color(b.sky);
-    scene.fog.color  = new THREE.Color(b.fog);
-    // Show banner
     const el = document.getElementById('biomeBanner');
     if (el) {
       el.textContent = b.name;
@@ -511,6 +509,62 @@ function updateBiomeTracking(dt) {
       if (el) el.classList.remove('show');
     }
   }
+}
+
+// =============================================================================
+// Day / night cycle — sun orbit, ambient intensity, sky/fog tinting
+// =============================================================================
+const DAY_LENGTH = 180; // seconds for a full day/night cycle
+let timeOfDay = 0.28;   // start mid-morning
+const _tmpSkyColor   = new THREE.Color();
+const _tmpFogColor   = new THREE.Color();
+const _nightTint     = new THREE.Color(0x0a1426);
+const _duskTint      = new THREE.Color(0xff8a40);
+const _dawnTint      = new THREE.Color(0xffb478);
+
+function updateDayNight(dt) {
+  timeOfDay = (timeOfDay + dt / DAY_LENGTH) % 1;
+
+  // Sun orbits on a tilted plane around the player. Angle 0 = sunrise east,
+  // PI/2 = noon above, PI = sunset west, 3*PI/2 = night below.
+  const angle = timeOfDay * Math.PI * 2 - Math.PI * 0.5;
+  const sunDist = 220;
+  sun.position.set(
+    player.pos.x + Math.cos(angle) * sunDist,
+    player.pos.y + Math.sin(angle) * sunDist + 40,
+    player.pos.z + Math.sin(angle * 0.8) * 40,
+  );
+
+  // Day factor: 1 = noon, 0 = night
+  const dayFactor = Math.max(0, Math.sin(timeOfDay * Math.PI * 2 - Math.PI * 0.5));
+  // Dusk / dawn factor: peaks right at sunrise / sunset
+  // At angle 0 (sunrise) or PI (sunset) → near horizon
+  const horizon = Math.max(0, 1 - Math.abs(Math.sin(angle)) * 3);
+  const dusk = horizon * (1 - dayFactor);
+
+  sun.intensity  = 0.2 + dayFactor * 1.0;
+  hemi.intensity = 0.15 + dayFactor * 0.55;
+  ambient.intensity = 0.08 + dayFactor * 0.22;
+
+  // Base from current biome, then tint with time-of-day
+  const biome = biomeAt(player.pos.x, player.pos.z, save.worldSeed);
+  _tmpSkyColor.set(biome.sky);
+  _tmpFogColor.set(biome.fog);
+
+  // Blend toward night tint as dayFactor drops
+  const nightMix = (1 - dayFactor) * 0.8;
+  _tmpSkyColor.lerp(_nightTint, nightMix);
+  _tmpFogColor.lerp(_nightTint, nightMix);
+
+  // Dusk / dawn warm tint
+  if (dusk > 0.05) {
+    const warm = timeOfDay < 0.5 ? _dawnTint : _duskTint;
+    _tmpSkyColor.lerp(warm, dusk * 0.45);
+    _tmpFogColor.lerp(warm, dusk * 0.45);
+  }
+
+  scene.background = _tmpSkyColor.clone();
+  scene.fog.color = _tmpFogColor;
 }
 
 // =============================================================================
@@ -633,6 +687,7 @@ function buildNPC(x, y, z, name, rand) {
   return g;
 }
 
+// Gold "!" marker — NPC has a quest to OFFER
 function addQuestMarker(npcGroup) {
   const marker = new THREE.Group();
   const bar = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.42, 0.10), markerMat);
@@ -642,6 +697,26 @@ function addQuestMarker(npcGroup) {
   marker.add(bar, dot);
   marker.position.y = 2.2;
   marker.userData.isQuestMarker = true;
+  npcGroup.add(marker);
+  npcGroup.userData.questMarker = marker;
+}
+
+// Cyan "?" marker — NPC can COMPLETE a ready quest (turn-in)
+const turnInMat = new THREE.MeshBasicMaterial({ color: 0x6ae8ff });
+function addTurnInMarker(npcGroup) {
+  const marker = new THREE.Group();
+  // Question mark: curve on top (arc made of a few small cubes) + dot
+  // Simpler: a small sphere at the top + a vertical bar tapering to a dot
+  const top = new THREE.Mesh(new THREE.SphereGeometry(0.09, 10, 8), turnInMat);
+  top.position.y = 0.12;
+  const bar = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.2, 0.08), turnInMat);
+  bar.position.y = -0.06;
+  const dot = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.08), turnInMat);
+  dot.position.y = -0.28;
+  marker.add(top, bar, dot);
+  marker.position.y = 2.2;
+  marker.userData.isQuestMarker = true;
+  marker.userData.turnIn = true;
   npcGroup.add(marker);
   npcGroup.userData.questMarker = marker;
 }
@@ -1236,7 +1311,19 @@ function acceptQuest(tmpl, fromNpc) {
   return true;
 }
 
-function completeQuest(q) {
+// Quest is "ready": objective reached, player must return to an NPC to hand
+// it in and collect the reward. Previously we auto-completed on reaching
+// the target, which skipped the return-to-village beat.
+function markQuestReady(q) {
+  if (q.ready) return;
+  q.ready = true;
+  showToast(`Quête prête — rends-la à un villageois !`);
+  persist();
+  updateQuestTracker();
+  refreshTurnInMarkers();
+}
+
+function turnInQuest(q) {
   const tmpl = getQuestTemplate(q.id);
   if (!tmpl) return;
   save.completedQuests.push(q.id);
@@ -1245,11 +1332,13 @@ function completeQuest(q) {
   showToast(`Quête complétée : <b>${tmpl.title}</b> (+${tmpl.reward?.xp || 0} ◈)`);
   persist();
   updateQuestTracker();
+  refreshTurnInMarkers();
 }
 
 function questEvent(type, extra = {}) {
   let changed = false;
   for (const q of save.activeQuests) {
+    if (q.ready) continue; // don't keep incrementing past the target
     const tmpl = getQuestTemplate(q.id);
     if (!tmpl) continue;
     const o = tmpl.objective;
@@ -1257,7 +1346,7 @@ function questEvent(type, extra = {}) {
     if (type === 'drop_tier' && extra.tier !== o.tier) continue;
     q.progress = Math.min(o.target, q.progress + (extra.amount || 1));
     changed = true;
-    if (q.progress >= o.target) completeQuest(q);
+    if (q.progress >= o.target) markQuestReady(q);
   }
   if (changed) updateQuestTracker();
 }
@@ -1265,16 +1354,42 @@ function questEvent(type, extra = {}) {
 function updateQuestDistances() {
   let changed = false;
   for (const q of save.activeQuests) {
+    if (q.ready) continue;
     const tmpl = getQuestTemplate(q.id);
     if (!tmpl || tmpl.objective.type !== 'distance') continue;
     const d = Math.hypot(player.pos.x - q.startX, player.pos.z - q.startZ);
     if (d > q.progress) {
       q.progress = Math.min(tmpl.objective.target, d);
       changed = true;
-      if (q.progress >= tmpl.objective.target) completeQuest(q);
+      if (q.progress >= tmpl.objective.target) markQuestReady(q);
     }
   }
   if (changed) updateQuestTracker();
+}
+
+// Update every NPC's marker. If the player has any ready quest, all NPCs
+// that gave quests (or any NPC with questId set) swap from the gold "!"
+// to a cyan "?" turn-in marker. Also regenerates fresh "!" markers for
+// NPCs whose pre-accepted quest was cleared by a reset.
+function refreshTurnInMarkers() {
+  for (const [, v] of villages) {
+    if (!v) continue;
+    for (const n of v.npcs) {
+      if (!n.userData.questId) continue;
+      const activeReady = save.activeQuests.find(q => q.id === n.userData.questId && q.ready);
+      const activeBusy  = save.activeQuests.find(q => q.id === n.userData.questId && !q.ready);
+      // Remove old marker
+      if (n.userData.questMarker) {
+        n.remove(n.userData.questMarker);
+        n.userData.questMarker = null;
+      }
+      if (activeReady) {
+        addTurnInMarker(n); // "?" cyan
+      } else if (!activeBusy && !save.completedQuests.includes(n.userData.questId)) {
+        addQuestMarker(n);  // "!" gold (back to offering)
+      }
+    }
+  }
 }
 
 // =============================================================================
@@ -1680,20 +1795,39 @@ function updateQuestTracker() {
 // --- Dialog modal --------------------------------------------------------
 let dialogNpc = null;
 let dialogQuest = null;
+let dialogMode = 'none'; // 'offer' | 'turnIn' | 'inProgress' | 'done' | 'none'
 function openDialog(npc) {
   if (!$dialog) return;
   dialogNpc = npc;
+  dialogMode = 'none';
+  $dialogName.textContent = npc.userData.name || 'Villageois';
+
+  // First: any ready quest the player can turn in to ANY NPC in this village?
+  const readyQuest = save.activeQuests.find(q => q.ready);
+  if (readyQuest) {
+    const tmpl = getQuestTemplate(readyQuest.id);
+    dialogQuest = { ...tmpl, _readyInstance: readyQuest };
+    dialogMode = 'turnIn';
+    $dialogText.innerHTML = `<b>« ${tmpl.title} »</b><br><br>"Tu as accompli ta mission. Reçois ta récompense, bûcheron."<br><br><i>Récompense : +${tmpl.reward.xp} ◈ essence</i>`;
+    $dialogAccept.style.display = '';
+    $dialogAccept.textContent = 'Rendre la quête';
+    $dialog.classList.remove('hidden');
+    return;
+  }
+
   const tmpl = getQuestTemplate(npc.userData.questId);
   dialogQuest = tmpl;
-  $dialogName.textContent = npc.userData.name || 'Villageois';
   if (tmpl && !save.activeQuests.some(q => q.id === tmpl.id) && !save.completedQuests.includes(tmpl.id)) {
+    dialogMode = 'offer';
     $dialogText.innerHTML = `<b>« ${tmpl.title} »</b><br><br>${tmpl.desc}<br><br><i>Récompense : +${tmpl.reward.xp} ◈ essence</i>`;
     $dialogAccept.style.display = '';
     $dialogAccept.textContent = 'Accepter';
   } else if (tmpl && save.completedQuests.includes(tmpl.id)) {
+    dialogMode = 'done';
     $dialogText.innerHTML = `"Merci encore, bûcheron. Tu as aidé notre village."`;
     $dialogAccept.style.display = 'none';
   } else if (tmpl) {
+    dialogMode = 'inProgress';
     $dialogText.innerHTML = `"N'oublie pas : <b>${tmpl.title}</b>. Reviens quand ce sera fait."`;
     $dialogAccept.style.display = 'none';
   } else {
@@ -1947,7 +2081,12 @@ $musicBtn?.addEventListener('click', () => {
 
 // --- Dialog modal wiring ---
 $dialogAccept?.addEventListener('click', () => {
-  if (dialogQuest && dialogNpc) {
+  if (dialogMode === 'turnIn' && dialogQuest?._readyInstance) {
+    turnInQuest(dialogQuest._readyInstance);
+    closeDialog();
+    return;
+  }
+  if (dialogMode === 'offer' && dialogQuest && dialogNpc) {
     if (acceptQuest(dialogQuest, dialogNpc)) {
       closeDialog();
     }
@@ -2120,6 +2259,7 @@ function loop() {
   try { ensureVisibleChunks(); }  catch (e) { logOnce('ensureVisibleChunks', e); }
   try { ensureVillages(); }       catch (e) { logOnce('ensureVillages', e); }
   try { updateBiomeTracking(dt); } catch (e) { logOnce('updateBiomeTracking', e); }
+  try { updateDayNight(dt); }      catch (e) { logOnce('updateDayNight', e); }
   try { updateBirds(dt); }        catch (e) { logOnce('updateBirds', e); }
   try { updateFoods(dt); }        catch (e) { logOnce('updateFoods', e); }
   try { updatePlants(dt); }       catch (e) { logOnce('updatePlants', e); }
