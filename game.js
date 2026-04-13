@@ -923,9 +923,14 @@ function buildLumberjack(group) {
   // --- Legs — full skeletal chain hip → knee → ankle → foot ---
   // Upper leg (thigh), lower leg (shin) and boot are nested groups so we
   // can bend the knee and rotate the ankle during the walk animation.
-  const thighGeo = new THREE.CapsuleGeometry(0.14, 0.24, 10, 20);
-  const shinGeo  = new THREE.CapsuleGeometry(0.12, 0.22, 10, 20);
-  const bootGeo  = new THREE.IcosahedronGeometry(0.22, 2);
+  const thighGeo = new THREE.CapsuleGeometry(0.145, 0.24, 12, 24);
+  const shinGeo  = new THREE.CapsuleGeometry(0.12, 0.22, 12, 24);
+  const bootGeo  = new THREE.IcosahedronGeometry(0.23, 3);
+  const kneeCapGeo = new THREE.SphereGeometry(0.11, 14, 10);
+  const bootSoleGeo = new THREE.BoxGeometry(0.3, 0.05, 0.42);
+  const bootLaceGeo = new THREE.BoxGeometry(0.04, 0.015, 0.04);
+  const soleMat = new THREE.MeshStandardMaterial({ color: 0x1a110a, roughness: 0.95 });
+  const laceMat = new THREE.MeshStandardMaterial({ color: 0xd4b070, roughness: 0.7 });
 
   function buildLeg(x) {
     // Hip pivot — top of the thigh, attached to the pelvis
@@ -942,6 +947,10 @@ function buildLumberjack(group) {
     knee.position.y = -0.35;
     hip.add(knee);
 
+    // Kneecap — small pants-colored sphere that fills the seam when bent
+    const kneeCap = new THREE.Mesh(kneeCapGeo, pantsMat);
+    knee.add(kneeCap);
+
     // Shin mesh centered below the knee
     const shin = new THREE.Mesh(shinGeo, pantsMat);
     shin.position.y = -0.175;
@@ -952,11 +961,19 @@ function buildLumberjack(group) {
     ankle.position.y = -0.35;
     knee.add(ankle);
 
-    // Foot (boot) mesh, slightly forward of the ankle
+    // Foot (boot) + a darker flat sole underneath + 3 laces on top
     const foot = new THREE.Mesh(bootGeo, bootsMat);
     foot.scale.set(1.2, 0.7, 1.65);
     foot.position.set(0, 0, -0.06);
     ankle.add(foot);
+    const sole = new THREE.Mesh(bootSoleGeo, soleMat);
+    sole.position.set(0, -0.13, -0.06);
+    ankle.add(sole);
+    for (let i = 0; i < 3; i++) {
+      const lace = new THREE.Mesh(bootLaceGeo, laceMat);
+      lace.position.set(0, 0.07 - i * 0.04, -0.14);
+      ankle.add(lace);
+    }
 
     return { hip, knee, ankle, foot };
   }
@@ -992,16 +1009,46 @@ function buildLumberjack(group) {
   collar.position.y = 1.62;
   group.add(collar);
 
-  // --- Arms — full skeletal chain shoulder → elbow → wrist → hand ---
-  const upperArmGeo = new THREE.CapsuleGeometry(0.11, 0.22, 10, 20);
-  const forearmGeo  = new THREE.CapsuleGeometry(0.09, 0.2, 10, 20);
-  const handGeo     = new THREE.SphereGeometry(0.12, 20, 14);
+  // --- Arms — full skeletal chain with fingers and a shoulder pad ---
+  const upperArmGeo = new THREE.CapsuleGeometry(0.115, 0.22, 12, 24);
+  const forearmGeo  = new THREE.CapsuleGeometry(0.095, 0.2, 12, 24);
+  const palmGeo     = new THREE.SphereGeometry(0.1, 18, 14);
+  const fingerGeo   = new THREE.CapsuleGeometry(0.022, 0.05, 6, 10);
+  const thumbGeo    = new THREE.CapsuleGeometry(0.025, 0.04, 6, 10);
+  const shoulderPadGeo = new THREE.SphereGeometry(0.18, 18, 14, 0, Math.PI * 2, 0, Math.PI / 2);
 
-  function buildArm(x, zTilt) {
+  function buildHand(mirrorX) {
+    // Palm + 4 fingers curled slightly forward + opposable thumb
+    const h = new THREE.Group();
+    const palm = new THREE.Mesh(palmGeo, skinMat);
+    palm.scale.set(1, 0.65, 1.25);
+    h.add(palm);
+    for (let i = 0; i < 4; i++) {
+      const f = new THREE.Mesh(fingerGeo, skinMat);
+      // Fingers extend forward (-Z) and fan out slightly along X
+      f.rotation.x = Math.PI / 2 - 0.25;
+      f.position.set(-0.055 + i * 0.032, 0, -0.095);
+      h.add(f);
+    }
+    const thumb = new THREE.Mesh(thumbGeo, skinMat);
+    thumb.rotation.set(Math.PI / 3, 0, (mirrorX ? -1 : 1) * (Math.PI / 3));
+    thumb.position.set((mirrorX ? -1 : 1) * 0.085, 0.02, -0.02);
+    h.add(thumb);
+    return h;
+  }
+
+  function buildArm(x, zTilt, mirrorX) {
     // Shoulder pivot
     const shoulder = new THREE.Group();
     shoulder.position.set(x, 1.55, 0);
     shoulder.rotation.z = zTilt;
+
+    // Shoulder pad (rounded dome) — hides the seam where the arm meets the
+    // torso and adds visual weight to the upper body.
+    const pad = new THREE.Mesh(shoulderPadGeo, shirtMat);
+    pad.position.y = 0.02;
+    pad.scale.set(1.05, 0.7, 1.1);
+    shoulder.add(pad);
 
     // Upper arm centered below the shoulder
     const upperArm = new THREE.Mesh(upperArmGeo, shirtMat);
@@ -1013,6 +1060,13 @@ function buildLumberjack(group) {
     elbow.position.y = -0.33;
     shoulder.add(elbow);
 
+    // Elbow cap (small sphere) to fill the seam when bent
+    const elbowCap = new THREE.Mesh(
+      new THREE.SphereGeometry(0.1, 14, 10),
+      shirtMat,
+    );
+    elbow.add(elbowCap);
+
     // Forearm centered below the elbow
     const forearm = new THREE.Mesh(forearmGeo, shirtMat);
     forearm.position.y = -0.15;
@@ -1023,15 +1077,15 @@ function buildLumberjack(group) {
     wrist.position.y = -0.32;
     elbow.add(wrist);
 
-    // Hand
-    const hand = new THREE.Mesh(handGeo, skinMat);
+    // Hand assembly
+    const hand = buildHand(mirrorX);
     hand.position.y = -0.06;
     wrist.add(hand);
 
     return { shoulder, elbow, wrist, hand };
   }
-  const armL = buildArm(-0.40,  0.22);
-  const armR = buildArm( 0.40, -0.22);
+  const armL = buildArm(-0.40,  0.22, true);
+  const armR = buildArm( 0.40, -0.22, false);
   group.add(armL.shoulder, armR.shoulder);
 
   // --- Neck + head (neck pivot at the collar, head pivot stacked on top) ---
@@ -1086,14 +1140,51 @@ function buildLumberjack(group) {
   moustache.position.set(0, 0.1, -0.22);
   headPivot.add(moustache);
 
-  // Eyes — two tiny dark spheres (on front = -z)
-  const eyeGeo = new THREE.SphereGeometry(0.028, 12, 10);
-  const eyeMat = new THREE.MeshStandardMaterial({ color: 0x101418, roughness: 0.3 });
+  // Eyes — sclera (white) + iris (dark) for a bit of extra detail
+  const scleraGeo = new THREE.SphereGeometry(0.036, 14, 12);
+  const irisGeo   = new THREE.SphereGeometry(0.018, 12, 10);
+  const scleraMat = new THREE.MeshStandardMaterial({ color: 0xf5efe3, roughness: 0.4 });
+  const irisMat   = new THREE.MeshStandardMaterial({ color: 0x224a6a, roughness: 0.35 });
   for (const ex of [-0.09, 0.09]) {
-    const eye = new THREE.Mesh(eyeGeo, eyeMat);
-    eye.position.set(ex, 0.18, -0.24);
-    headPivot.add(eye);
+    const sclera = new THREE.Mesh(scleraGeo, scleraMat);
+    sclera.position.set(ex, 0.18, -0.235);
+    headPivot.add(sclera);
+    const iris = new THREE.Mesh(irisGeo, irisMat);
+    iris.position.set(ex, 0.18, -0.265);
+    headPivot.add(iris);
+    // Eyebrow — dark thin box above the eye
+    const brow = new THREE.Mesh(
+      new THREE.BoxGeometry(0.07, 0.022, 0.03),
+      hairMat,
+    );
+    brow.position.set(ex, 0.235, -0.24);
+    brow.rotation.z = ex < 0 ? 0.12 : -0.12;
+    headPivot.add(brow);
   }
+
+  // Nose — small skin-colored sphere below the eyes
+  const nose = new THREE.Mesh(
+    new THREE.SphereGeometry(0.05, 14, 12),
+    skinMat,
+  );
+  nose.scale.set(0.9, 0.9, 1.2);
+  nose.position.set(0, 0.11, -0.27);
+  headPivot.add(nose);
+
+  // Ears — small disc-like spheres on both sides of the head
+  for (const ex of [-0.27, 0.27]) {
+    const ear = new THREE.Mesh(new THREE.SphereGeometry(0.05, 12, 10), skinMat);
+    ear.scale.set(0.6, 1.1, 1.2);
+    ear.position.set(ex, 0.12, -0.02);
+    headPivot.add(ear);
+  }
+
+  // Neck cylinder (skin) between the collar and the head so the seam is
+  // properly filled in.
+  const neckGeo = new THREE.CylinderGeometry(0.13, 0.14, 0.18, 14);
+  const neckMesh = new THREE.Mesh(neckGeo, skinMat);
+  neckMesh.position.y = -0.06;
+  neck.add(neckMesh);
 
   // --- Cap — dome + brim at the front ---
   const capCrown = new THREE.Mesh(
@@ -1405,11 +1496,10 @@ function updatePlayer(dt) {
   player.group.position.y += Math.abs(sinP2) * 0.06 * moving;
 
   // --- Idle rest pose: right hand on the hip, left arm forward ---
-  // Applied when the player isn't moving, swimming or chopping. Uses a
-  // simple lerp toward the rest angles so the transition from walking
-  // stays smooth.
+  // Plus breathing, head scanning, and ambient micro-motion.
   if (!moving && !player.swimming && player.axeSwing <= 0) {
     const a = player.parts;
+    const tSec = performance.now() * 0.001;
     // Right arm — hand on the hip (arm tucked inward, elbow bent forward)
     a.armR.shoulder.rotation.x = THREE.MathUtils.lerp(a.armR.shoulder.rotation.x, 0.15,  0.18);
     a.armR.shoulder.rotation.z = THREE.MathUtils.lerp(a.armR.shoulder.rotation.z, -0.55, 0.18);
@@ -1420,6 +1510,19 @@ function updatePlayer(dt) {
     a.armL.shoulder.rotation.z = THREE.MathUtils.lerp(a.armL.shoulder.rotation.z, 0.25,  0.18);
     a.armL.elbow.rotation.x    = THREE.MathUtils.lerp(a.armL.elbow.rotation.x,   -0.35,  0.18);
     a.armL.wrist.rotation.x    = THREE.MathUtils.lerp(a.armL.wrist.rotation.x,    0,     0.18);
+    // Breathing — subtle torso + chest expansion
+    const breath = Math.sin(tSec * 2.3) * 0.02;
+    a.torso.scale.set(1, 1 + breath, 1);
+    // Head scanning — slow look-around
+    const scan = Math.sin(tSec * 0.45);
+    a.neck.rotation.y = scan * 0.22;
+    a.headPivot.rotation.y = scan * 0.12;
+    a.headPivot.rotation.x = Math.sin(tSec * 0.9) * 0.04;
+    // Small idle bob
+    player.group.position.y += Math.sin(tSec * 2.3) * 0.01;
+  } else {
+    // Reset the torso breathing scale outside the idle state
+    player.parts.torso.scale.set(1, 1, 1);
   }
 
   // --- Swimming → standing on a surfboard + beard in the wind ---
