@@ -882,26 +882,30 @@ function buildLumberjack(group) {
   const berryMat   = new THREE.MeshLambertMaterial({ color: 0xe03a58, emissive: 0x3a0612, emissiveIntensity: 0.4 });
   const capMat     = new THREE.MeshLambertMaterial({ color: 0xa31414 });
 
-  // Materials — switch to MeshStandardMaterial for softer, nicer shading
+  // Materials — MeshStandardMaterial for softer, nicer shading
   const beltMat = new THREE.MeshStandardMaterial({ color: 0x4a2a12, roughness: 0.75 });
   const buckleMat = new THREE.MeshStandardMaterial({ color: 0xd4a952, metalness: 0.7, roughness: 0.35 });
-  const hairMat = new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 0.85 });
+  const hairMat = new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 0.9 });
 
-  // --- Legs — capsules with rounded ends for a smooth silhouette ---
-  // CapsuleGeometry(radius, length, capSegments, radialSegments)
-  const legGeo  = new THREE.CapsuleGeometry(0.14, 0.55, 6, 12);
-  // Boots: a squashed icosahedron gives a pleasant rounded-boot shape
+  // The whole character is built with its "front" on -Z (walking direction
+  // at yaw=0), so the 3rd-person camera (positioned behind on +Z) sees the
+  // back of the character. All face / belt / satchel features live at
+  // negative z.
+  // Higher subdivisions so every curve is smooth.
+
+  // --- Legs — capsules, high-res ---
+  const legGeo  = new THREE.CapsuleGeometry(0.15, 0.6, 10, 20);
   const bootGeo = new THREE.IcosahedronGeometry(0.22, 2);
 
   function buildLeg(x) {
     const hip = new THREE.Group();
-    hip.position.set(x, 0.82, 0); // top of leg (hip pivot)
+    hip.position.set(x, 0.85, 0);
     const leg = new THREE.Mesh(legGeo, pantsMat);
-    leg.position.y = -0.38;       // capsule center hangs below the hip
+    leg.position.y = -0.4;
     hip.add(leg);
     const boot = new THREE.Mesh(bootGeo, bootsMat);
-    boot.scale.set(1.15, 0.7, 1.5); // flatten + extend front-to-back
-    boot.position.set(0, -0.82 + 0.12, 0.05); // sole near y=0 relative to group
+    boot.scale.set(1.18, 0.7, 1.6);
+    boot.position.set(0, -0.85 + 0.13, -0.08); // toes toward -z (front)
     hip.add(boot);
     return hip;
   }
@@ -909,147 +913,151 @@ function buildLumberjack(group) {
   const hipR = buildLeg( 0.14);
   group.add(hipL, hipR);
 
-  // --- Torso — smooth capsule, tapering slightly toward the waist ---
-  const torsoGeo = new THREE.CapsuleGeometry(0.32, 0.6, 8, 16);
+  // --- Torso — capsule, high-res ---
+  const torsoGeo = new THREE.CapsuleGeometry(0.34, 0.65, 12, 24);
   const torso = new THREE.Mesh(torsoGeo, shirtMat);
-  torso.position.y = 1.22;
+  torso.position.y = 1.25;
   group.add(torso);
 
-  // Belt around the waist — thin flattened torus
-  const beltGeo = new THREE.TorusGeometry(0.33, 0.05, 8, 20);
+  // Belt (thin torus) + buckle at front (-z)
+  const beltGeo = new THREE.TorusGeometry(0.35, 0.055, 12, 28);
   const belt = new THREE.Mesh(beltGeo, beltMat);
   belt.rotation.x = Math.PI / 2;
-  belt.position.y = 0.84;
+  belt.position.y = 0.86;
   group.add(belt);
-  // Buckle
   const buckle = new THREE.Mesh(
     new THREE.BoxGeometry(0.12, 0.08, 0.04),
     buckleMat,
   );
-  buckle.position.set(0, 0.84, 0.33);
+  buckle.position.set(0, 0.86, -0.35);
   group.add(buckle);
 
-  // Collar (simple torus to soften the neck transition)
-  const collarGeo = new THREE.TorusGeometry(0.22, 0.05, 8, 18);
-  const collar = new THREE.Mesh(collarGeo, shirtMat);
+  // Collar to soften the neck
+  const collar = new THREE.Mesh(
+    new THREE.TorusGeometry(0.24, 0.055, 10, 22),
+    shirtMat,
+  );
   collar.rotation.x = Math.PI / 2;
-  collar.position.y = 1.58;
+  collar.position.y = 1.62;
   group.add(collar);
 
-  // --- Arms — shoulder pivots with capsule upper arm + sphere hand ---
-  const armGeo  = new THREE.CapsuleGeometry(0.1, 0.55, 6, 12);
-  const handGeo = new THREE.SphereGeometry(0.12, 16, 12);
+  // --- Arms (shoulder pivots) ---
+  const armGeo  = new THREE.CapsuleGeometry(0.11, 0.62, 10, 20);
+  const handGeo = new THREE.SphereGeometry(0.13, 20, 14);
 
   function buildArm(x, zTilt) {
     const shoulder = new THREE.Group();
-    shoulder.position.set(x, 1.50, 0);
+    shoulder.position.set(x, 1.55, 0);
     shoulder.rotation.z = zTilt;
     const arm = new THREE.Mesh(armGeo, shirtMat);
-    arm.position.y = -0.38;
+    arm.position.y = -0.4;
     shoulder.add(arm);
     const hand = new THREE.Mesh(handGeo, skinMat);
-    hand.position.y = -0.80;
+    hand.position.y = -0.86;
     shoulder.add(hand);
     return shoulder;
   }
-  const shoulderL = buildArm(-0.38,  0.22);
-  const shoulderR = buildArm( 0.38, -0.22);
+  const shoulderL = buildArm(-0.40,  0.22);
+  const shoulderR = buildArm( 0.40, -0.22);
   group.add(shoulderL, shoulderR);
 
-  // --- Head — high-subdivision sphere, smooth shaded ---
+  // --- Head (pivot group so it can nod / shake with walk animation) ---
+  const headPivot = new THREE.Group();
+  headPivot.position.y = 1.72;
+  group.add(headPivot);
   const head = new THREE.Mesh(
-    new THREE.SphereGeometry(0.26, 22, 18),
+    new THREE.SphereGeometry(0.28, 32, 26),
     skinMat,
   );
-  head.position.y = 1.85;
-  group.add(head);
+  head.position.y = 0.18;
+  headPivot.add(head);
 
-  // Big bushy beard — a large ellipsoid wrapping the lower half of the head,
-  // plus two smaller spheres at the sides for volume (no hair on the head,
-  // cap sits directly on a bald crown).
+  // Big bushy beard wrapping the lower half of the head
   const beardCore = new THREE.Mesh(
-    new THREE.SphereGeometry(0.26, 18, 14, 0, Math.PI * 2, Math.PI / 3, Math.PI),
+    new THREE.SphereGeometry(0.28, 26, 20, 0, Math.PI * 2, Math.PI / 3, Math.PI),
     hairMat,
   );
-  beardCore.scale.set(1.15, 1.55, 1.1);
-  beardCore.position.set(0, 1.62, 0.02);
-  group.add(beardCore);
-  // Side fluff — two smaller rounded spheres flanking the jaw
-  const beardSideL = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 10), hairMat);
-  beardSideL.scale.set(0.9, 1.2, 0.9);
-  beardSideL.position.set(-0.18, 1.66, 0);
-  group.add(beardSideL);
-  const beardSideR = beardSideL.clone();
-  beardSideR.position.set(0.18, 1.66, 0);
-  group.add(beardSideR);
-  // Moustache — smaller sphere right below the nose area
-  const moustache = new THREE.Mesh(new THREE.SphereGeometry(0.12, 12, 8), hairMat);
-  moustache.scale.set(1.4, 0.5, 0.7);
-  moustache.position.set(0, 1.80, 0.21);
-  group.add(moustache);
+  beardCore.scale.set(1.2, 1.65, 1.15);
+  beardCore.position.set(0, -0.05, -0.02);
+  headPivot.add(beardCore);
+  // Side fluff
+  for (const sx of [-0.2, 0.2]) {
+    const side = new THREE.Mesh(new THREE.SphereGeometry(0.17, 18, 14), hairMat);
+    side.scale.set(0.9, 1.25, 0.9);
+    side.position.set(sx, 0, -0.03);
+    headPivot.add(side);
+  }
+  // Moustache
+  const moustache = new THREE.Mesh(new THREE.SphereGeometry(0.13, 16, 12), hairMat);
+  moustache.scale.set(1.45, 0.5, 0.7);
+  moustache.position.set(0, 0.1, -0.22);
+  headPivot.add(moustache);
 
-  // Eyes — two tiny dark spheres
-  const eyeGeo = new THREE.SphereGeometry(0.025, 8, 6);
-  const eyeMat = new THREE.MeshStandardMaterial({ color: 0x101418 });
-  for (const ex of [-0.08, 0.08]) {
+  // Eyes — two tiny dark spheres (on front = -z)
+  const eyeGeo = new THREE.SphereGeometry(0.028, 12, 10);
+  const eyeMat = new THREE.MeshStandardMaterial({ color: 0x101418, roughness: 0.3 });
+  for (const ex of [-0.09, 0.09]) {
     const eye = new THREE.Mesh(eyeGeo, eyeMat);
-    eye.position.set(ex, 1.88, 0.22);
-    group.add(eye);
+    eye.position.set(ex, 0.18, -0.24);
+    headPivot.add(eye);
   }
 
-  // --- Cap — smooth dome + soft brim ---
-  // Crown as a half sphere
+  // --- Cap — dome + brim at the front ---
   const capCrown = new THREE.Mesh(
-    new THREE.SphereGeometry(0.27, 20, 14, 0, Math.PI * 2, 0, Math.PI / 2),
+    new THREE.SphereGeometry(0.3, 26, 18, 0, Math.PI * 2, 0, Math.PI / 2),
     capMat,
   );
-  capCrown.position.y = 1.98;
-  group.add(capCrown);
-  // Brim as a very flat torus slice
-  const capBrim = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.32, 0.32, 0.04, 20, 1, false, -Math.PI * 0.15, Math.PI * 1.3),
+  capCrown.position.y = 0.28;
+  headPivot.add(capCrown);
+  // Brim: thin flattened box extending forward from the crown
+  const brim = new THREE.Mesh(
+    new THREE.BoxGeometry(0.4, 0.04, 0.22),
     capMat,
   );
-  capBrim.position.set(0, 1.95, 0.08);
-  capBrim.rotation.y = Math.PI; // front-facing brim
-  group.add(capBrim);
+  brim.position.set(0, 0.24, -0.22);
+  headPivot.add(brim);
+  // Round the brim corners by adding two small cylinders at the ends
+  const brimSideGeo = new THREE.CylinderGeometry(0.02, 0.02, 0.22, 8);
+  brimSideGeo.rotateX(Math.PI / 2);
+  for (const sx of [-0.2, 0.2]) {
+    const side = new THREE.Mesh(brimSideGeo, capMat);
+    side.position.set(sx, 0.24, -0.22);
+    headPivot.add(side);
+  }
 
-  // --- Satchel — rounded pouch with hanging strap ---
-  // Strap (slightly thicker curved box)
+  // --- Satchel (left hip, front -z) ---
   const strap = new THREE.Mesh(
     new THREE.BoxGeometry(0.06, 1.0, 0.04),
     satchelMat,
   );
-  strap.position.set(0.04, 1.2, 0.2);
+  strap.position.set(0.04, 1.2, -0.2);
   strap.rotation.z = -0.42;
   group.add(strap);
-  // Pouch — rounded box approximated with an icosahedron scale
   const pouch = new THREE.Mesh(
-    new THREE.IcosahedronGeometry(0.2, 1),
+    new THREE.IcosahedronGeometry(0.22, 2),
     satchelMat,
   );
-  pouch.scale.set(1.7, 1.3, 0.8);
-  pouch.position.set(-0.36, 0.88, 0.1);
-  pouch.rotation.y = 0.35;
+  pouch.scale.set(1.7, 1.3, 0.85);
+  pouch.position.set(-0.36, 0.9, -0.12);
+  pouch.rotation.y = -0.35;
   group.add(pouch);
-  // Flap — small flattened sphere on top of the pouch
   const flap = new THREE.Mesh(
-    new THREE.SphereGeometry(0.18, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2),
+    new THREE.SphereGeometry(0.2, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2),
     satchelMat,
   );
-  flap.scale.set(1.6, 0.5, 0.7);
-  flap.position.set(-0.36, 1.00, 0.12);
-  flap.rotation.y = 0.35;
+  flap.scale.set(1.6, 0.55, 0.75);
+  flap.position.set(-0.36, 1.02, -0.14);
+  flap.rotation.y = -0.35;
   group.add(flap);
 
-  // Berries peeking out of the pouch — higher-res spheres, emissive
-  const berryGeo = new THREE.SphereGeometry(0.07, 12, 10);
+  // Berries peeking out of the pouch (front side)
+  const berryGeo = new THREE.SphereGeometry(0.075, 14, 12);
   const berrySpots = [
-    [-0.28, 1.04,  0.17],
-    [-0.36, 1.07,  0.23],
-    [-0.44, 1.04,  0.17],
-    [-0.32, 1.09,  0.12],
-    [-0.40, 1.08,  0.12],
+    [-0.28, 1.06, -0.19],
+    [-0.36, 1.09, -0.24],
+    [-0.44, 1.06, -0.19],
+    [-0.32, 1.11, -0.14],
+    [-0.40, 1.10, -0.14],
   ];
   for (const [x, y, z] of berrySpots) {
     const b = new THREE.Mesh(berryGeo, berryMat);
@@ -1057,7 +1065,7 @@ function buildLumberjack(group) {
     group.add(b);
   }
 
-  return { hipL, hipR, shoulderL, shoulderR, torso };
+  return { hipL, hipR, shoulderL, shoulderR, torso, headPivot };
 }
 player.parts = buildLumberjack(player.group);
 player.walkPhase = 0;
@@ -1143,27 +1151,38 @@ function updatePlayer(dt) {
   player.group.position.y -= PLAYER_HEIGHT * 0.5; // mesh is modelled with feet at 0
   player.group.rotation.y = player.yaw;
 
-  // --- Walk animation (hip + shoulder swings) ---
+  // --- Walk animation (hip + shoulder + torso + head) ---
   const horizSpeed = Math.hypot(player.vel.x, player.vel.z);
   if (horizSpeed > 0.1) {
-    // Step frequency scales gently with speed so sprint looks faster
-    player.walkPhase += dt * (4 + horizSpeed * 0.5);
+    player.walkPhase += dt * (5 + horizSpeed * 0.6);
   } else {
-    // Ease back to neutral when idle
-    player.walkPhase *= 0.9;
+    player.walkPhase *= 0.88;
   }
   const moving = horizSpeed > 0.1 ? 1 : 0;
-  const swing  = Math.sin(player.walkPhase) * 0.7 * moving;
-  const swing2 = Math.sin(player.walkPhase * 2) * 0.06 * moving;
-  // Legs swing opposite each other
+  // Amplified swings for more visible motion
+  const swing  = Math.sin(player.walkPhase) * 1.15 * moving;
+  const swing2 = Math.sin(player.walkPhase * 2) * 0.1 * moving;
+  // Legs swing opposite each other, with a small forward default
   player.parts.hipL.rotation.x =  swing;
   player.parts.hipR.rotation.x = -swing;
-  // Arms swing opposite to the matching leg
-  player.parts.shoulderL.rotation.x = -swing * 0.9;
-  player.parts.shoulderR.rotation.x =  swing * 0.9;
-  // Slight body bob + torso roll for liveliness
-  player.group.position.y += Math.abs(Math.sin(player.walkPhase)) * 0.04 * moving;
+  // Arms counter-swing with extra amplitude
+  player.parts.shoulderL.rotation.x = -swing * 1.1;
+  player.parts.shoulderR.rotation.x =  swing * 1.1;
+  // Arm splay — elbows out a bit on the down-swing so it reads as a walk
+  player.parts.shoulderL.rotation.z =  0.22 + Math.abs(swing) * 0.08;
+  player.parts.shoulderR.rotation.z = -0.22 - Math.abs(swing) * 0.08;
+  // Torso counter-rotates around Y (hips go left → shoulders go right)
+  player.parts.torso.rotation.y = -swing * 0.25;
+  // Small torso roll (side to side) + lean forward slightly when sprinting
   player.parts.torso.rotation.z = swing2;
+  player.parts.torso.rotation.x = -horizSpeed * 0.015;
+  // Head bobs slightly, counter-rotates for balance
+  if (player.parts.headPivot) {
+    player.parts.headPivot.rotation.y = swing * 0.12;
+    player.parts.headPivot.position.y = 1.72 + Math.abs(Math.sin(player.walkPhase * 2)) * 0.03 * moving;
+  }
+  // Whole-body bob up/down (2× phase since each step contributes a bob)
+  player.group.position.y += Math.abs(Math.sin(player.walkPhase * 2)) * 0.06 * moving;
 
   // Follow camera — orbital around player using yaw/pitch
   const cp = Math.cos(player.pitch), sp = Math.sin(player.pitch);
