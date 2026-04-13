@@ -1071,6 +1071,65 @@ function buildLumberjack(group) {
     group.add(b);
   }
 
+  // --- Axe slung diagonally across the back (+Z side) ---
+  const axeGroup = new THREE.Group();
+  // Sit the whole axe just behind the torso, slightly leaning right
+  axeGroup.position.set(-0.05, 1.22, 0.42);
+  axeGroup.rotation.set(-0.08, 0, Math.PI * 0.22);
+
+  const woodMat  = new THREE.MeshStandardMaterial({ color: 0x7a4a22, roughness: 0.85 });
+  const steelMat = new THREE.MeshStandardMaterial({ color: 0x9aa3ab, metalness: 0.8, roughness: 0.3 });
+  const darkSteelMat = new THREE.MeshStandardMaterial({ color: 0x5a6068, metalness: 0.7, roughness: 0.45 });
+
+  // Handle — long capsule
+  const handle = new THREE.Mesh(
+    new THREE.CapsuleGeometry(0.035, 1.05, 8, 16),
+    woodMat,
+  );
+  axeGroup.add(handle);
+  // Leather grip at the lower end
+  const grip = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.045, 0.045, 0.22, 10),
+    darkSteelMat,
+  );
+  grip.position.y = -0.55;
+  axeGroup.add(grip);
+
+  // Axe head — a trapezoid-ish wedge built from a box + a cutting blade
+  const headBody = new THREE.Mesh(
+    new THREE.BoxGeometry(0.14, 0.2, 0.08),
+    steelMat,
+  );
+  headBody.position.y = 0.58;
+  axeGroup.add(headBody);
+
+  // Blade: a wider flared plate on the outer edge — achieved with a
+  // small cylinder rotated 90° so the "disk" becomes a vertical fan
+  const bladeGeo = new THREE.CylinderGeometry(0.14, 0.02, 0.02, 12, 1, false, -Math.PI * 0.35, Math.PI * 0.7);
+  const blade = new THREE.Mesh(bladeGeo, steelMat);
+  blade.rotation.z = Math.PI / 2;
+  blade.position.set(0.11, 0.58, 0);
+  axeGroup.add(blade);
+
+  // Small back fin (counterweight / poll)
+  const poll = new THREE.Mesh(
+    new THREE.BoxGeometry(0.06, 0.12, 0.07),
+    darkSteelMat,
+  );
+  poll.position.set(-0.1, 0.58, 0);
+  axeGroup.add(poll);
+
+  // Handle pin through the head (decorative)
+  const pin = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.012, 0.012, 0.1, 6),
+    darkSteelMat,
+  );
+  pin.position.y = 0.58;
+  pin.rotation.z = Math.PI / 2;
+  axeGroup.add(pin);
+
+  group.add(axeGroup);
+
   return { hipL, hipR, shoulderL, shoulderR, torso, headPivot };
 }
 player.parts = buildLumberjack(player.group);
