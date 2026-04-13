@@ -34,15 +34,29 @@
     <div class="bottom">
       <div id="foodbar"></div>
       <div id="tip">
-        Clique pour verrouiller la souris — <b>WASD</b> se déplacer, <b>Shift</b> courir,
-        <b>Espace</b> sauter, <b>clic</b> déposer la nourriture, <b>1–5</b> choisir,
-        <b>Échap</b> libérer.
+        <span class="desktop-only">
+          <b>Clic-glisser</b> pour regarder, <b>WASD</b> se déplacer,
+          <b>Shift</b> courir, <b>Espace</b> sauter, <b>clic</b> nourrir,
+          <b>1–5</b> choisir la nourriture.
+        </span>
+        <span class="touch-only">
+          Joystick pour avancer, glisser à l'écran pour regarder,
+          <b>◈</b> nourrir, <b>▲</b> sauter. Choisis la nourriture dans la barre.
+        </span>
       </div>
     </div>
   </div>
 
   <div id="unlock" class="toast hidden"></div>
   <div id="crosshair"></div>
+
+  <div id="joystick">
+    <div id="joystickThumb"></div>
+  </div>
+  <div id="touchButtons">
+    <button id="btnJump" class="touchBtn" title="Sauter">▲</button>
+    <button id="btnFeed" class="touchBtn feed" title="Nourrir">◈</button>
+  </div>
 </div>
 
 <script type="importmap">

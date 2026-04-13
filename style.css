@@ -7,7 +7,7 @@ body {
   user-select: none;
   -webkit-user-select: none;
 }
-#c { position: fixed; inset: 0; display: block; width: 100%; height: 100%; }
+#c { position: fixed; inset: 0; display: block; width: 100%; height: 100%; touch-action: none; }
 
 #hud {
   position: fixed;
@@ -139,3 +139,73 @@ button:active { transform: translateY(1px); }
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4), 0 0 8px rgba(120, 200, 255, 0.5);
   pointer-events: none;
 }
+
+/* --- Touch UI: joystick + action buttons --- */
+#joystick {
+  position: fixed;
+  left: 24px;
+  bottom: 110px;
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+  background: rgba(10, 18, 28, 0.45);
+  backdrop-filter: blur(6px);
+  border: 2px solid rgba(140, 200, 255, 0.25);
+  pointer-events: auto;
+  touch-action: none;
+  display: none;
+}
+#joystickThumb {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 62px;
+  height: 62px;
+  margin: -31px 0 0 -31px;
+  border-radius: 50%;
+  background: rgba(140, 200, 255, 0.55);
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  box-shadow: 0 0 16px rgba(120, 200, 255, 0.3);
+  pointer-events: none;
+  transition: transform 0.05s linear;
+}
+#touchButtons {
+  position: fixed;
+  right: 24px;
+  bottom: 110px;
+  display: none;
+  flex-direction: column;
+  gap: 14px;
+  pointer-events: auto;
+}
+.touchBtn {
+  width: 74px;
+  height: 74px;
+  border-radius: 50%;
+  background: rgba(10, 18, 28, 0.55);
+  border: 2px solid rgba(140, 200, 255, 0.35);
+  color: #eef6ff;
+  font-size: 26px;
+  font-weight: 700;
+  touch-action: none;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.touchBtn.feed {
+  background: rgba(120, 200, 255, 0.28);
+  border-color: #7ad7ff;
+  color: #7ad7ff;
+  box-shadow: 0 0 18px rgba(120, 200, 255, 0.35);
+}
+.touchBtn:active { transform: scale(0.94); }
+
+/* Show the touch UI only on touch-capable devices (JS toggles body.touch) */
+body.touch #joystick,
+body.touch #touchButtons { display: flex; }
+body.touch #crosshair { display: none; }
+
+.touch-only { display: none; }
+body.touch .touch-only { display: inline; }
+body.touch .desktop-only { display: none; }
