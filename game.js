@@ -807,113 +807,174 @@ function buildLumberjack(group) {
   const berryMat   = new THREE.MeshLambertMaterial({ color: 0xe03a58, emissive: 0x3a0612, emissiveIntensity: 0.4 });
   const capMat     = new THREE.MeshLambertMaterial({ color: 0xa31414 });
 
-  // --- Legs as hip pivots so rotation.x swings the whole leg from the hip ---
-  const legGeo  = new THREE.CylinderGeometry(0.12, 0.12, 0.75, 6);
-  const bootGeo = new THREE.BoxGeometry(0.28, 0.18, 0.34);
+  // Materials — switch to MeshStandardMaterial for softer, nicer shading
+  const beltMat = new THREE.MeshStandardMaterial({ color: 0x4a2a12, roughness: 0.75 });
+  const buckleMat = new THREE.MeshStandardMaterial({ color: 0xd4a952, metalness: 0.7, roughness: 0.35 });
+  const hairMat = new THREE.MeshStandardMaterial({ color: 0x3a2a1a, roughness: 0.85 });
+
+  // --- Legs — capsules with rounded ends for a smooth silhouette ---
+  // CapsuleGeometry(radius, length, capSegments, radialSegments)
+  const legGeo  = new THREE.CapsuleGeometry(0.14, 0.55, 6, 12);
+  // Boots: a squashed icosahedron gives a pleasant rounded-boot shape
+  const bootGeo = new THREE.IcosahedronGeometry(0.22, 2);
 
   function buildLeg(x) {
     const hip = new THREE.Group();
-    hip.position.set(x, 0.755, 0); // hip height (top of leg)
+    hip.position.set(x, 0.82, 0); // top of leg (hip pivot)
     const leg = new THREE.Mesh(legGeo, pantsMat);
-    leg.position.y = -0.375;       // cylinder center hangs below the hip
+    leg.position.y = -0.38;       // capsule center hangs below the hip
     hip.add(leg);
     const boot = new THREE.Mesh(bootGeo, bootsMat);
-    boot.position.set(0, -0.755 + 0.09, 0.03); // sole at y=0 relative to group
+    boot.scale.set(1.15, 0.7, 1.5); // flatten + extend front-to-back
+    boot.position.set(0, -0.82 + 0.12, 0.05); // sole near y=0 relative to group
     hip.add(boot);
     return hip;
   }
-  const hipL = buildLeg(-0.13);
-  const hipR = buildLeg( 0.13);
+  const hipL = buildLeg(-0.14);
+  const hipR = buildLeg( 0.14);
   group.add(hipL, hipR);
 
-  // Torso (shirt)
-  const torso = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.3, 0.27, 0.8, 10),
-    shirtMat,
-  );
-  torso.position.y = 1.15;
+  // --- Torso — smooth capsule, tapering slightly toward the waist ---
+  const torsoGeo = new THREE.CapsuleGeometry(0.32, 0.6, 8, 16);
+  const torso = new THREE.Mesh(torsoGeo, shirtMat);
+  torso.position.y = 1.22;
   group.add(torso);
 
-  // --- Arms as shoulder pivots ---
-  const armGeo  = new THREE.CylinderGeometry(0.09, 0.09, 0.75, 6);
-  const handGeo = new THREE.SphereGeometry(0.1, 8, 6);
+  // Belt around the waist — thin flattened torus
+  const beltGeo = new THREE.TorusGeometry(0.33, 0.05, 8, 20);
+  const belt = new THREE.Mesh(beltGeo, beltMat);
+  belt.rotation.x = Math.PI / 2;
+  belt.position.y = 0.84;
+  group.add(belt);
+  // Buckle
+  const buckle = new THREE.Mesh(
+    new THREE.BoxGeometry(0.12, 0.08, 0.04),
+    buckleMat,
+  );
+  buckle.position.set(0, 0.84, 0.33);
+  group.add(buckle);
+
+  // Collar (simple torus to soften the neck transition)
+  const collarGeo = new THREE.TorusGeometry(0.22, 0.05, 8, 18);
+  const collar = new THREE.Mesh(collarGeo, shirtMat);
+  collar.rotation.x = Math.PI / 2;
+  collar.position.y = 1.58;
+  group.add(collar);
+
+  // --- Arms — shoulder pivots with capsule upper arm + sphere hand ---
+  const armGeo  = new THREE.CapsuleGeometry(0.1, 0.55, 6, 12);
+  const handGeo = new THREE.SphereGeometry(0.12, 16, 12);
 
   function buildArm(x, zTilt) {
     const shoulder = new THREE.Group();
-    shoulder.position.set(x, 1.48, 0); // shoulder position
-    shoulder.rotation.z = zTilt;       // slight outward tilt at rest
+    shoulder.position.set(x, 1.50, 0);
+    shoulder.rotation.z = zTilt;
     const arm = new THREE.Mesh(armGeo, shirtMat);
-    arm.position.y = -0.375;
+    arm.position.y = -0.38;
     shoulder.add(arm);
     const hand = new THREE.Mesh(handGeo, skinMat);
-    hand.position.y = -0.78;
+    hand.position.y = -0.80;
     shoulder.add(hand);
     return shoulder;
   }
-  const shoulderL = buildArm(-0.35,  0.2);
-  const shoulderR = buildArm( 0.35, -0.2);
+  const shoulderL = buildArm(-0.38,  0.22);
+  const shoulderR = buildArm( 0.38, -0.22);
   group.add(shoulderL, shoulderR);
 
-  // Head
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.24, 14, 10), skinMat);
-  head.position.y = 1.78;
+  // --- Head — high-subdivision sphere, smooth shaded ---
+  const head = new THREE.Mesh(
+    new THREE.SphereGeometry(0.26, 22, 18),
+    skinMat,
+  );
+  head.position.y = 1.85;
   group.add(head);
 
-  // Beard (small dark cone under the head, optional lumberjack vibe)
-  const beard = new THREE.Mesh(
-    new THREE.ConeGeometry(0.18, 0.22, 8),
-    new THREE.MeshLambertMaterial({ color: 0x3a2a1a }),
+  // Big bushy beard — a large ellipsoid wrapping the lower half of the head,
+  // plus two smaller spheres at the sides for volume (no hair on the head,
+  // cap sits directly on a bald crown).
+  const beardCore = new THREE.Mesh(
+    new THREE.SphereGeometry(0.26, 18, 14, 0, Math.PI * 2, Math.PI / 3, Math.PI),
+    hairMat,
   );
-  beard.position.set(0, 1.62, 0.12);
-  beard.rotation.x = 0.3;
-  group.add(beard);
+  beardCore.scale.set(1.15, 1.55, 1.1);
+  beardCore.position.set(0, 1.62, 0.02);
+  group.add(beardCore);
+  // Side fluff — two smaller rounded spheres flanking the jaw
+  const beardSideL = new THREE.Mesh(new THREE.SphereGeometry(0.16, 12, 10), hairMat);
+  beardSideL.scale.set(0.9, 1.2, 0.9);
+  beardSideL.position.set(-0.18, 1.66, 0);
+  group.add(beardSideL);
+  const beardSideR = beardSideL.clone();
+  beardSideR.position.set(0.18, 1.66, 0);
+  group.add(beardSideR);
+  // Moustache — smaller sphere right below the nose area
+  const moustache = new THREE.Mesh(new THREE.SphereGeometry(0.12, 12, 8), hairMat);
+  moustache.scale.set(1.4, 0.5, 0.7);
+  moustache.position.set(0, 1.80, 0.21);
+  group.add(moustache);
 
-  // Cap (cylinder crown + flat brim)
+  // Eyes — two tiny dark spheres
+  const eyeGeo = new THREE.SphereGeometry(0.025, 8, 6);
+  const eyeMat = new THREE.MeshStandardMaterial({ color: 0x101418 });
+  for (const ex of [-0.08, 0.08]) {
+    const eye = new THREE.Mesh(eyeGeo, eyeMat);
+    eye.position.set(ex, 1.88, 0.22);
+    group.add(eye);
+  }
+
+  // --- Cap — smooth dome + soft brim ---
+  // Crown as a half sphere
   const capCrown = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.25, 0.25, 0.14, 14),
+    new THREE.SphereGeometry(0.27, 20, 14, 0, Math.PI * 2, 0, Math.PI / 2),
     capMat,
   );
-  capCrown.position.y = 1.97;
+  capCrown.position.y = 1.98;
   group.add(capCrown);
+  // Brim as a very flat torus slice
   const capBrim = new THREE.Mesh(
-    new THREE.BoxGeometry(0.42, 0.04, 0.2),
+    new THREE.CylinderGeometry(0.32, 0.32, 0.04, 20, 1, false, -Math.PI * 0.15, Math.PI * 1.3),
     capMat,
   );
-  capBrim.position.set(0, 1.92, 0.22);
+  capBrim.position.set(0, 1.95, 0.08);
+  capBrim.rotation.y = Math.PI; // front-facing brim
   group.add(capBrim);
 
-  // Satchel on the left hip (strap across torso + pouch)
+  // --- Satchel — rounded pouch with hanging strap ---
+  // Strap (slightly thicker curved box)
   const strap = new THREE.Mesh(
-    new THREE.BoxGeometry(0.06, 0.9, 0.04),
+    new THREE.BoxGeometry(0.06, 1.0, 0.04),
     satchelMat,
   );
-  strap.position.set(0.08, 1.18, 0.18);
-  strap.rotation.z = -0.45;
+  strap.position.set(0.04, 1.2, 0.2);
+  strap.rotation.z = -0.42;
   group.add(strap);
+  // Pouch — rounded box approximated with an icosahedron scale
   const pouch = new THREE.Mesh(
-    new THREE.BoxGeometry(0.34, 0.26, 0.16),
+    new THREE.IcosahedronGeometry(0.2, 1),
     satchelMat,
   );
-  pouch.position.set(-0.32, 0.88, 0.08);
+  pouch.scale.set(1.7, 1.3, 0.8);
+  pouch.position.set(-0.36, 0.88, 0.1);
   pouch.rotation.y = 0.35;
   group.add(pouch);
-  // Flap
+  // Flap — small flattened sphere on top of the pouch
   const flap = new THREE.Mesh(
-    new THREE.BoxGeometry(0.34, 0.12, 0.02),
+    new THREE.SphereGeometry(0.18, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2),
     satchelMat,
   );
-  flap.position.set(-0.32, 1.02, 0.17);
+  flap.scale.set(1.6, 0.5, 0.7);
+  flap.position.set(-0.36, 1.00, 0.12);
   flap.rotation.y = 0.35;
   group.add(flap);
 
-  // Berries peeking out of the pouch
-  const berryGeo = new THREE.SphereGeometry(0.065, 8, 6);
+  // Berries peeking out of the pouch — higher-res spheres, emissive
+  const berryGeo = new THREE.SphereGeometry(0.07, 12, 10);
   const berrySpots = [
-    [-0.26, 1.02,  0.17],
-    [-0.34, 1.05,  0.22],
-    [-0.41, 1.02,  0.17],
-    [-0.30, 1.07,  0.12],
-    [-0.38, 1.06,  0.12],
+    [-0.28, 1.04,  0.17],
+    [-0.36, 1.07,  0.23],
+    [-0.44, 1.04,  0.17],
+    [-0.32, 1.09,  0.12],
+    [-0.40, 1.08,  0.12],
   ];
   for (const [x, y, z] of berrySpots) {
     const b = new THREE.Mesh(berryGeo, berryMat);
