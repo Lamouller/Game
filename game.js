@@ -1675,8 +1675,11 @@ const CELL = 8;
 
 const birds = [];
 // InstancedMesh for birds — flattened octahedron looks vaguely bird-ish
-const birdGeo = new THREE.OctahedronGeometry(0.5, 0);
-birdGeo.scale(1.6, 0.3, 1.0);
+// Bigger base geometry so birds are clearly visible at flight altitudes.
+// Was (0.5 radius) * (1.6, 0.3, 1.0) = 1.6 x 0.3 x 1.0 world units.
+// Now (0.9 radius) * (1.7, 0.35, 1.1) = ~3.1 x 0.6 x 2.0 — almost 2x bigger.
+const birdGeo = new THREE.OctahedronGeometry(0.9, 0);
+birdGeo.scale(1.7, 0.35, 1.1);
 const birdMat = new THREE.MeshLambertMaterial({ vertexColors: false });
 const birdMesh = new THREE.InstancedMesh(birdGeo, birdMat, MAX_BIRDS);
 birdMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
@@ -1699,7 +1702,7 @@ class Bird {
     this.energy = 50;
     this.age = 0;
     this.evo = 0; // evolution stage 0..4
-    this.scale = 0.8 + Math.random() * 0.3;
+    this.scale = 1.1 + Math.random() * 0.4;
     this.color = new THREE.Color().setHSL(Math.random(), 0.55, 0.55);
     this.phase = Math.random() * Math.PI * 2;
     // --- Pollination state ---
@@ -1708,18 +1711,19 @@ class Bird {
   }
 }
 
-// Spawn birds in a close ring around the player so they're immediately visible.
-// Range tuned so the birds land between the player head and 12 units above
-// the ground — always within the camera frustum at default pitch.
+// Spawn birds in a close ring around the player so they're immediately
+// visible. Altitude is tuned so the bird sits roughly at the camera's
+// look-at height (around player head + 1-4 units), well inside the
+// default 70° FOV regardless of terrain height.
 function spawnBird() {
   if (birds.length >= MAX_BIRDS) return;
   const angle = Math.random() * Math.PI * 2;
-  const r = 8 + Math.random() * 20;
+  const r = 8 + Math.random() * 18;
   const x = player.pos.x + Math.cos(angle) * r;
   const z = player.pos.z + Math.sin(angle) * r;
   const ground = terrainHeight(x, z, save.worldSeed, worldLevel());
-  // Spawn between player head height and +12 above it so they're in view
-  const h = Math.max(ground + 3, player.pos.y + 2 + Math.random() * 10);
+  // Lower and tighter than before — eye level to just above the head
+  const h = Math.max(ground + 2.5, player.pos.y + 0.5 + Math.random() * 4);
   birds.push(new Bird(new THREE.Vector3(x, h, z)));
 }
 
@@ -1810,19 +1814,19 @@ function updateBirds(dt) {
       }
     }
 
-    // Ground / ceiling avoidance — lowered when a food target is near enough,
-    // otherwise the bird hovers ~5 units above the food and never reaches it.
+    // Ground / ceiling avoidance — birds prefer to fly at a lower, visible
+    // altitude rather than high above the player. When diving at food, even
+    // lower.
     const groundH = terrainHeight(b.pos.x, b.pos.z, seed, lvl);
-    // Default min altitude is 4 above ground; when diving toward food, allow
-    // a much lower approach so the bird can reach ground-level seeds.
     const foodDiveMode = !!best && b.pos.distanceTo(best.pos) < 18;
-    const minY = foodDiveMode ? groundH + 0.5 : groundH + 4;
-    const maxY = 70;
+    // Default min altitude: ~2 above ground. Ceiling: ~8 above the player.
+    const minY = foodDiveMode ? groundH + 0.5 : groundH + 2;
+    const maxY = foodDiveMode ? groundH + 20 : (player.pos.y + 10);
     tmpGround.set(0, 0, 0);
-    if (b.pos.y < minY + (foodDiveMode ? 1 : 5)) {
-      tmpGround.y += (minY + (foodDiveMode ? 1 : 5) - b.pos.y) * (foodDiveMode ? 1 : 3);
+    if (b.pos.y < minY + (foodDiveMode ? 1 : 2)) {
+      tmpGround.y += (minY + (foodDiveMode ? 1 : 2) - b.pos.y) * (foodDiveMode ? 1 : 2);
     }
-    if (b.pos.y > maxY)     tmpGround.y -= (b.pos.y - maxY) * 3;
+    if (b.pos.y > maxY) tmpGround.y -= (b.pos.y - maxY) * 2;
 
     // Soft bounds relative to the player (keep birds in a bubble around them
     // — the world is infinite but we don't want flocks straying off forever)
