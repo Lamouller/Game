@@ -167,71 +167,117 @@ button:active { transform: translateY(1px); }
   pointer-events: none;
 }
 
-/* --- Touch UI: joystick + action buttons --- */
-#joystick {
+/* --- Touch UI: twin joysticks + labelled action buttons --- */
+.joy {
   position: fixed;
-  left: 24px;
-  bottom: 110px;
-  width: 140px;
-  height: 140px;
+  width: 150px;
+  height: 150px;
   border-radius: 50%;
   background: rgba(10, 18, 28, 0.45);
-  backdrop-filter: blur(6px);
-  border: 2px solid rgba(140, 200, 255, 0.25);
+  border: 2px solid rgba(140, 200, 255, 0.3);
   pointer-events: auto;
   touch-action: none;
   display: none;
 }
-#joystickThumb {
+.joyLabel {
+  position: absolute;
+  top: -22px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  opacity: 0.7;
+  color: #eef6ff;
+  pointer-events: none;
+}
+.joyThumb {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 62px;
-  height: 62px;
-  margin: -31px 0 0 -31px;
+  width: 68px;
+  height: 68px;
+  margin: -34px 0 0 -34px;
   border-radius: 50%;
   background: rgba(140, 200, 255, 0.55);
-  border: 2px solid rgba(255, 255, 255, 0.5);
-  box-shadow: 0 0 16px rgba(120, 200, 255, 0.3);
+  border: 2px solid rgba(255, 255, 255, 0.55);
+  box-shadow: 0 0 18px rgba(120, 200, 255, 0.4);
   pointer-events: none;
   transition: transform 0.05s linear;
 }
+#joystick {
+  left: 20px;
+  bottom: 24px;
+}
+#lookJoystick {
+  right: 20px;
+  bottom: 24px;
+}
+#lookJoystick .joyThumb { background: rgba(255, 210, 130, 0.55); }
+
 #touchButtons {
   position: fixed;
-  right: 24px;
-  bottom: 110px;
+  right: 190px;
+  bottom: 40px;
   display: none;
-  flex-direction: column;
-  gap: 14px;
+  grid-template-columns: repeat(2, 72px);
+  grid-auto-rows: 72px;
+  gap: 10px;
   pointer-events: auto;
 }
 .touchBtn {
-  width: 74px;
-  height: 74px;
-  border-radius: 50%;
-  background: rgba(10, 18, 28, 0.55);
+  width: 72px;
+  height: 72px;
+  border-radius: 16px;
+  background: rgba(10, 18, 28, 0.65);
   border: 2px solid rgba(140, 200, 255, 0.35);
   color: #eef6ff;
-  font-size: 26px;
+  font-size: 24px;
   font-weight: 700;
   touch-action: none;
   user-select: none;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  padding: 4px;
+  line-height: 1.1;
+}
+.touchBtn .btnLbl {
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  opacity: 0.85;
+  margin-top: 2px;
+  text-transform: uppercase;
 }
 .touchBtn.feed {
   background: rgba(120, 200, 255, 0.28);
   border-color: #7ad7ff;
   color: #7ad7ff;
-  box-shadow: 0 0 18px rgba(120, 200, 255, 0.35);
+  box-shadow: 0 0 16px rgba(120, 200, 255, 0.3);
 }
-.touchBtn:active { transform: scale(0.94); }
+.touchBtn.gather {
+  background: rgba(180, 120, 60, 0.32);
+  border-color: #e09a56;
+  color: #ffc08a;
+}
+.touchBtn.talk {
+  background: rgba(180, 255, 150, 0.22);
+  border-color: #a5e078;
+  color: #b8f090;
+}
+.touchBtn.jump {
+  background: rgba(220, 220, 220, 0.18);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+.touchBtn:active { transform: scale(0.92); }
 
 /* Show the touch UI only on touch-capable devices (JS toggles body.touch) */
 body.touch #joystick,
-body.touch #touchButtons { display: flex; }
-body.touch #crosshair { display: none; }
+body.touch #lookJoystick { display: block; }
+body.touch #touchButtons { display: grid; }
+body.touch #crosshair    { display: none; }
 
 .touch-only { display: none; }
 body.touch .touch-only { display: inline; }
