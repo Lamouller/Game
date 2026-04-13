@@ -1304,11 +1304,11 @@ function buildLumberjack(group) {
   board.position.y = 0;
   surfboard.add(board);
   // Round the tip by adding a small tapered cylinder at the front
-  const nose = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.35, 0.4, 12, 1, false, 0, Math.PI), boardMat);
-  nose.rotation.x = Math.PI / 2;
-  nose.rotation.z = Math.PI;
-  nose.position.set(0, 0, -1.1);
-  surfboard.add(nose);
+  const boardTip = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.35, 0.4, 12, 1, false, 0, Math.PI), boardMat);
+  boardTip.rotation.x = Math.PI / 2;
+  boardTip.rotation.z = Math.PI;
+  boardTip.position.set(0, 0, -1.1);
+  surfboard.add(boardTip);
   // Red center stripe for flavor
   const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.09, 1.8), stripeMat);
   stripe.position.y = 0.01;

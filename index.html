@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
 <title>Birdlife — Whispering Woods</title>
-<link rel="stylesheet" href="style.css?v=20" />
+<link rel="stylesheet" href="style.css?v=21" />
 </head>
 <body>
 <div id="app">
@@ -109,6 +109,9 @@
     </div>
   </div>
 
+  <!-- Global error overlay: shows any uncaught JS error so we never get a silent white screen again -->
+  <div id="errorOverlay" class="hidden"></div>
+
   <div id="joystick" class="joy">
     <div class="joyLabel">DÉPLACER</div>
     <div id="joystickThumb" class="joyThumb"></div>
@@ -131,6 +134,25 @@
      the ♪ button (browsers block unsolicited autoplay). -->
 <audio id="bgm" src="https://ice1.somafm.com/metal-128-mp3" preload="none"></audio>
 
+<script>
+  // Surface any uncaught error directly in the HUD so we never stare at a
+  // silent white screen again.
+  window.addEventListener('error', function (e) {
+    var el = document.getElementById('errorOverlay');
+    if (!el) return;
+    el.classList.remove('hidden');
+    el.innerHTML = '<b>Erreur JS</b><br>' +
+      (e.message || 'unknown') +
+      '<br><small>' + (e.filename || '') + ':' + (e.lineno || 0) + '</small>';
+  });
+  window.addEventListener('unhandledrejection', function (e) {
+    var el = document.getElementById('errorOverlay');
+    if (!el) return;
+    el.classList.remove('hidden');
+    el.innerHTML = '<b>Promise rejetée</b><br>' +
+      ((e.reason && e.reason.message) || String(e.reason));
+  });
+</script>
 <script type="importmap">
 {
   "imports": {
@@ -138,6 +160,6 @@
   }
 }
 </script>
-<script type="module" src="game.js?v=20"></script>
+<script type="module" src="game.js?v=21"></script>
 </body>
 </html>
