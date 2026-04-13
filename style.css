@@ -220,10 +220,14 @@ button:active { transform: translateY(1px); }
   right: 190px;
   bottom: 40px;
   display: none;
-  grid-template-columns: repeat(2, 72px);
-  grid-auto-rows: 72px;
-  gap: 10px;
+  grid-template-columns: repeat(3, 64px);
+  grid-auto-rows: 64px;
+  gap: 8px;
   pointer-events: auto;
+}
+.touchBtn {
+  width: 64px !important;
+  height: 64px !important;
 }
 .touchBtn {
   width: 72px;
@@ -266,6 +270,11 @@ button:active { transform: translateY(1px); }
   background: rgba(180, 255, 150, 0.22);
   border-color: #a5e078;
   color: #b8f090;
+}
+.touchBtn.plant {
+  background: rgba(140, 220, 140, 0.22);
+  border-color: #6fd060;
+  color: #b0e0a0;
 }
 .touchBtn.jump {
   background: rgba(220, 220, 220, 0.18);
@@ -453,6 +462,50 @@ body.touch .desktop-only { display: none; }
   cursor: pointer;
 }
 #dialog button.primary:hover { background: linear-gradient(180deg, #4a8adc, #2f5ea4); }
+#dialog button.secondary {
+  background: linear-gradient(180deg, #5a4028, #3a2a1a);
+  border: 1px solid #a87a4a;
+  color: #ffd9a0;
+  padding: 10px 18px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+}
+#dialog button.secondary:hover { background: linear-gradient(180deg, #6a5038, #4a3a2a); }
+
+/* Trade list inside dialog */
+.tradeList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+.tradeRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(140, 200, 255, 0.2);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 14px;
+}
+.tradeRow button {
+  background: linear-gradient(180deg, #3a7a5a, #1e4e3a);
+  border: 1px solid #6fd7a8;
+  color: #fff;
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+}
+.tradeRow button:hover { background: linear-gradient(180deg, #4a8a6a, #2e5e4a); }
+.tradeRow button:disabled {
+  background: rgba(100, 100, 100, 0.3);
+  border-color: rgba(255, 255, 255, 0.15);
+  cursor: not-allowed;
+  color: rgba(255, 255, 255, 0.4);
+}
 
 /* Big overlay panels (inventory, world map) share the same modal shell */
 .bigPanel {
