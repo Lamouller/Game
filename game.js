@@ -857,7 +857,8 @@ const GRAVITY       = 22;
 const player = {
   pos: new THREE.Vector3(0, 30, 0),
   vel: new THREE.Vector3(),
-  yaw: 0,
+  yaw: 0,      // camera yaw — driven by look joystick / mouse drag
+  meshYaw: 0,  // character facing — lerps to match the walking direction
   pitch: 0.15,
   onGround: false,
   swimming: false,
@@ -1431,13 +1432,32 @@ function updatePlayer(dt) {
 
   // No world bounds — the world streams in as the player moves
 
-  // Update mesh
+  // Update mesh position
   player.group.position.copy(player.pos);
   player.group.position.y -= PLAYER_HEIGHT * 0.5; // mesh is modelled with feet at 0
-  player.group.rotation.y = player.yaw;
+
+  // --- Mesh facing: rotate the character toward the walking direction ---
+  // Camera yaw (player.yaw) is independent of the character facing so the
+  // look joystick / mouse drag can orbit freely while the body turns
+  // smoothly to match whatever direction you're actually moving in.
+  const horizSpeed = Math.hypot(player.vel.x, player.vel.z);
+  if (horizSpeed > 0.2) {
+    const desired = Math.atan2(-player.vel.x, -player.vel.z);
+    // Shortest-path delta (wrap to [-π, π])
+    let diff = desired - player.meshYaw;
+    while (diff >  Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    player.meshYaw += diff * Math.min(1, dt * 12);
+  } else if (player.swimming) {
+    // While surfing, keep facing the camera yaw so it reads as "looking ahead"
+    let diff = player.yaw - player.meshYaw;
+    while (diff >  Math.PI) diff -= Math.PI * 2;
+    while (diff < -Math.PI) diff += Math.PI * 2;
+    player.meshYaw += diff * Math.min(1, dt * 5);
+  }
+  player.group.rotation.y = player.meshYaw;
 
   // --- Walk / swim animation: full skeletal chain ---
-  const horizSpeed = Math.hypot(player.vel.x, player.vel.z);
   if (player.swimming) {
     player.walkPhase += dt * 2.5; // slow constant paddle
   } else if (horizSpeed > 0.1) {
