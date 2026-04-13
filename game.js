@@ -95,7 +95,11 @@ window.addEventListener('keydown', e => {
       buildFoodbar();
     }
   }
-  if (e.code === 'Escape') document.exitPointerLock?.();
+  if (e.code === 'Escape') {
+    document.exitPointerLock?.();
+    if (typeof closeDialog === 'function') closeDialog();
+  }
+  if (e.code === 'KeyE' && typeof tryInteract === 'function') tryInteract();
 });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
 window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
@@ -146,12 +150,27 @@ scene.add(worldGroup);
 // Map key "cx,cz" -> { group, cx, cz }
 const chunks = new Map();
 
-// Shared materials — created once, re-used by every chunk
+// Shared terrain material (uses per-vertex biome colors)
 const terrainMat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
-const foliageMat = new THREE.MeshLambertMaterial({ color: 0x2e5a2a });
-const trunkMat   = new THREE.MeshLambertMaterial({ color: 0x5a3a22 });
-const rockMat    = new THREE.MeshLambertMaterial({ color: 0x888888, flatShading: true });
-const flowerMat  = new THREE.MeshLambertMaterial({ color: 0xff9ad0 });
+
+// Per-biome materials, created lazily and cached
+const biomeMats = new Map(); // biome.id -> { foliage, trunk, rock, flower }
+function rgbToHex(r, g, b) {
+  return ((r * 255) & 0xff) * 65536 + ((g * 255) & 0xff) * 256 + ((b * 255) & 0xff);
+}
+function getBiomeMats(biome) {
+  let m = biomeMats.get(biome.id);
+  if (!m) {
+    m = {
+      foliage: new THREE.MeshLambertMaterial({ color: biome.trees }),
+      trunk:   new THREE.MeshLambertMaterial({ color: biome.trunks }),
+      rock:    new THREE.MeshLambertMaterial({ color: rgbToHex(...biome.rock), flatShading: true }),
+      flower:  new THREE.MeshLambertMaterial({ color: biome.flowerColor }),
+    };
+    biomeMats.set(biome.id, m);
+  }
+  return m;
+}
 
 // Shared instanced-mesh source geometries
 const foliageGeoSrc = new THREE.ConeGeometry(1.6, 5, 6);
@@ -182,6 +201,99 @@ function mulberry32(a) {
   };
 }
 
+// --- Biomes ---------------------------------------------------------------
+// 6 hand-tuned zones inspired by classic open-world MMO regions. Each
+// chunk picks a single biome by sampling very low-frequency noise at its
+// center, so the world has coherent regions dozens-to-hundreds of units
+// wide instead of random per-chunk colors.
+const BIOMES = [
+  {
+    id: 'clairiere',
+    name: 'La Clairière des Ormes',
+    sky: 0x9fd0ff, fog: 0xbfe0ff,
+    grass: [0.32, 0.56, 0.22],
+    dryGrass: [0.72, 0.76, 0.40],
+    rock: [0.55, 0.55, 0.55],
+    sand: [0.82, 0.78, 0.55],
+    trees: 0x2e5a2a, trunks: 0x5a3a22,
+    treeDensity: 1.1,
+    flowerColor: 0xff9ad0,
+  },
+  {
+    id: 'cimes',
+    name: 'Les Cimes de Givre',
+    sky: 0xd8e8ff, fog: 0xd4e4ff,
+    grass: [0.84, 0.88, 0.95],
+    dryGrass: [0.90, 0.92, 0.96],
+    rock: [0.85, 0.88, 0.92],
+    sand: [0.92, 0.94, 0.96],
+    trees: 0x3a5a4a, trunks: 0x4a3020,
+    treeDensity: 0.45,
+    flowerColor: 0xd0e0ff,
+  },
+  {
+    id: 'desert',
+    name: 'Le Désert des Coquelicots',
+    sky: 0xffd9a0, fog: 0xffcfa0,
+    grass: [0.82, 0.68, 0.36],
+    dryGrass: [0.90, 0.78, 0.44],
+    rock: [0.78, 0.56, 0.32],
+    sand: [0.94, 0.82, 0.54],
+    trees: 0x6a8040, trunks: 0x5a3a22,
+    treeDensity: 0.2,
+    flowerColor: 0xff4050,
+  },
+  {
+    id: 'marais',
+    name: 'Les Marais Chanteurs',
+    sky: 0x8aa098, fog: 0x7a9088,
+    grass: [0.22, 0.44, 0.30],
+    dryGrass: [0.34, 0.48, 0.30],
+    rock: [0.42, 0.48, 0.46],
+    sand: [0.5, 0.52, 0.40],
+    trees: 0x1f3a22, trunks: 0x3a2814,
+    treeDensity: 1.4,
+    flowerColor: 0xb8d060,
+  },
+  {
+    id: 'foret',
+    name: 'La Forêt Chuchotante',
+    sky: 0x7a8ae0, fog: 0x6070c0,
+    grass: [0.25, 0.32, 0.48],
+    dryGrass: [0.30, 0.36, 0.50],
+    rock: [0.32, 0.35, 0.52],
+    sand: [0.42, 0.44, 0.58],
+    trees: 0x4060a0, trunks: 0x2a2040,
+    treeDensity: 1.8,
+    flowerColor: 0x9ac8ff,
+  },
+  {
+    id: 'dorees',
+    name: 'Les Collines Dorées',
+    sky: 0xffe7a8, fog: 0xffd996,
+    grass: [0.80, 0.68, 0.22],
+    dryGrass: [0.88, 0.78, 0.30],
+    rock: [0.68, 0.55, 0.22],
+    sand: [0.92, 0.82, 0.48],
+    trees: 0x6a7a20, trunks: 0x5a3a20,
+    treeDensity: 0.55,
+    flowerColor: 0xffdd40,
+  },
+];
+
+function biomeAt(x, z, seed) {
+  // Low-frequency "humidity" & "temperature" fields
+  const h = fbm(x * 0.0028, z * 0.0028, seed + 7001, 2);
+  const t = fbm(x * 0.0022, z * 0.0022, seed + 9103, 2);
+  // Pick by regions of (h, t) space
+  if (h > 0.70)            return BIOMES[1]; // cimes (high)
+  if (h > 0.55 && t > 0.60) return BIOMES[5]; // dorées (warm mid-high)
+  if (h < 0.35 && t > 0.55) return BIOMES[2]; // désert (low, warm)
+  if (h < 0.40 && t < 0.45) return BIOMES[3]; // marais (low, cool)
+  if (t < 0.30)             return BIOMES[4]; // forêt (cold-mid)
+  return BIOMES[0];                           // clairière (default)
+}
+
 function chunkKey(cx, cz) { return cx + ',' + cz; }
 
 function buildChunk(cx, cz) {
@@ -191,14 +303,19 @@ function buildChunk(cx, cz) {
   const originZ = cz * CHUNK_SIZE;
   const rand = mulberry32((cx * 73856093) ^ (cz * 19349663) ^ (seed * 2654435761));
 
+  // Dominant biome sampled at the chunk center — controls tree / rock
+  // materials and density. Per-vertex terrain colors will still blend
+  // between biomes for smoother regional transitions.
+  const centerBiome = biomeAt(originX + CHUNK_SIZE / 2, originZ + CHUNK_SIZE / 2, seed);
+  const mats = getBiomeMats(centerBiome);
+
   const group = new THREE.Group();
 
-  // --- Terrain patch ---
+  // --- Terrain patch (per-vertex biome-aware colors) ---
   const geo = new THREE.PlaneGeometry(CHUNK_SIZE, CHUNK_SIZE, CHUNK_SEG, CHUNK_SEG);
   geo.rotateX(-Math.PI / 2);
   const pos = geo.attributes.position;
   const colors = new Float32Array(pos.count * 3);
-  const tmpColor = new THREE.Color();
   for (let i = 0; i < pos.count; i++) {
     const lx = pos.getX(i);
     const lz = pos.getZ(i);
@@ -206,13 +323,24 @@ function buildChunk(cx, cz) {
     const wz = originZ + lz;
     const h = terrainHeight(wx, wz, seed, lvl);
     pos.setY(i, h);
-    if (h < -2)      tmpColor.setRGB(0.82, 0.78, 0.55);
-    else if (h < 2)  tmpColor.setRGB(0.72, 0.76, 0.40);
-    else if (h < 13) tmpColor.setRGB(0.25 + (h / 40), 0.52, 0.22);
-    else             tmpColor.setRGB(0.55, 0.55, 0.55);
-    colors[i * 3]     = tmpColor.r;
-    colors[i * 3 + 1] = tmpColor.g;
-    colors[i * 3 + 2] = tmpColor.b;
+    const b = biomeAt(wx, wz, seed);
+    let cr, cg, cb;
+    if (h < -2) {
+      [cr, cg, cb] = b.sand;
+    } else if (h < 2) {
+      [cr, cg, cb] = b.dryGrass;
+    } else if (h < 13) {
+      // Blend grass toward "rich" based on height within the range
+      const f = Math.min(1, (h + 2) / 15);
+      cr = b.grass[0] + f * 0.05;
+      cg = b.grass[1] + f * 0.05;
+      cb = b.grass[2];
+    } else {
+      [cr, cg, cb] = b.rock;
+    }
+    colors[i * 3]     = cr;
+    colors[i * 3 + 1] = cg;
+    colors[i * 3 + 2] = cb;
   }
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   geo.computeVertexNormals();
@@ -220,11 +348,11 @@ function buildChunk(cx, cz) {
   terrain.position.set(originX, 0, originZ);
   group.add(terrain);
 
-  // --- Trees ---
-  const nTreesTarget = 6 + Math.floor(rand() * (4 + lvl * 2));
+  // --- Trees (biome-colored, biome-density) ---
+  const nTreesTarget = Math.max(1, Math.round((6 + rand() * (4 + lvl * 2)) * centerBiome.treeDensity));
   const dummy = new THREE.Object3D();
-  const foliage = new THREE.InstancedMesh(foliageGeoSrc, foliageMat, nTreesTarget);
-  const trunks  = new THREE.InstancedMesh(trunkGeoSrc,   trunkMat,   nTreesTarget);
+  const foliage = new THREE.InstancedMesh(foliageGeoSrc, mats.foliage, nTreesTarget);
+  const trunks  = new THREE.InstancedMesh(trunkGeoSrc,   mats.trunk,   nTreesTarget);
   let placed = 0;
   for (let i = 0; i < nTreesTarget * 4 && placed < nTreesTarget; i++) {
     const x = originX + rand() * CHUNK_SIZE;
@@ -247,7 +375,7 @@ function buildChunk(cx, cz) {
 
   // --- Rocks ---
   const nRocks = 3 + Math.floor(rand() * (3 + lvl));
-  const rocks = new THREE.InstancedMesh(rockGeoSrc, rockMat, nRocks);
+  const rocks = new THREE.InstancedMesh(rockGeoSrc, mats.rock, nRocks);
   for (let i = 0; i < nRocks; i++) {
     const x = originX + rand() * CHUNK_SIZE;
     const z = originZ + rand() * CHUNK_SIZE;
@@ -265,7 +393,7 @@ function buildChunk(cx, cz) {
   // --- Flowers (higher world level) ---
   if (lvl >= 4) {
     const nFlowers = 12 + Math.floor(rand() * (lvl * 4));
-    const flowers = new THREE.InstancedMesh(flowerGeoSrc, flowerMat, nFlowers);
+    const flowers = new THREE.InstancedMesh(flowerGeoSrc, mats.flower, nFlowers);
     for (let i = 0; i < nFlowers; i++) {
       const x = originX + rand() * CHUNK_SIZE;
       const z = originZ + rand() * CHUNK_SIZE;
@@ -317,14 +445,271 @@ function clearAllChunks() {
 
 function buildWorld() {
   clearAllChunks();
-  // Sky tint shifts with level
-  const lvl = worldLevel();
-  const skyHues = [0x9fd0ff, 0xb8dcff, 0xffd6a8, 0xffc0cb, 0xc7b6ff, 0x8a7ae8];
-  const col = new THREE.Color(skyHues[Math.min(lvl - 1, skyHues.length - 1)]);
-  scene.background = col;
-  scene.fog.color.copy(col);
+  if (typeof clearAllVillages === 'function') clearAllVillages();
   // Initial ring around current player position
   ensureVisibleChunks();
+  // Force biome banner to re-trigger on next frame
+  currentBiomeId = null;
+}
+
+// --- Biome tracking: updates sky/fog and shows a "zone entered" banner ---
+let currentBiomeId = null;
+let biomeBannerTimer = 0;
+function updateBiomeTracking(dt) {
+  const b = biomeAt(player.pos.x, player.pos.z, save.worldSeed);
+  if (b.id !== currentBiomeId) {
+    currentBiomeId = b.id;
+    // Update sky & fog color smoothly on change
+    scene.background = new THREE.Color(b.sky);
+    scene.fog.color  = new THREE.Color(b.fog);
+    // Show banner
+    const el = document.getElementById('biomeBanner');
+    if (el) {
+      el.textContent = b.name;
+      el.classList.remove('hidden');
+      el.classList.add('show');
+      biomeBannerTimer = 3.5;
+    }
+  }
+  if (biomeBannerTimer > 0) {
+    biomeBannerTimer -= dt;
+    if (biomeBannerTimer <= 0) {
+      const el = document.getElementById('biomeBanner');
+      if (el) el.classList.remove('show');
+    }
+  }
+}
+
+// =============================================================================
+// Villages (procedural, deterministic, streamed like chunks)
+// =============================================================================
+const VILLAGE_GRID = 480;   // world units per village grid cell
+const VILLAGE_VIEW = 1;     // 3x3 cells scanned around player
+const villages = new Map(); // "vgx,vgz" -> { group, worldX, worldZ, npcs, key } | null
+
+// Shared materials for village props
+const wallMat     = new THREE.MeshLambertMaterial({ color: 0xc9a97a });
+const roofMat     = new THREE.MeshLambertMaterial({ color: 0x8a3e2a });
+const stoneMat    = new THREE.MeshLambertMaterial({ color: 0x777777, flatShading: true });
+const wellWoodMat = new THREE.MeshLambertMaterial({ color: 0x5a3a22 });
+const npcShirtMat = new THREE.MeshLambertMaterial({ color: 0x3a7a3a });
+const npcSkinMat  = new THREE.MeshLambertMaterial({ color: 0xf2c79a });
+const markerMat   = new THREE.MeshBasicMaterial({ color: 0xffd23a });
+
+const NPC_NAMES = [
+  'Émile',   'Mathilde', 'Gaspard', 'Rosalie', 'Eulalie',
+  'Ferdinand', 'Camille', 'Augustin', 'Léontine', 'Joachim',
+];
+
+function hasVillageAt(vgx, vgz, seed) {
+  // Use a large stride hash so villages feel rare
+  const r = hash2(vgx * 91, vgz * 73, seed + 4242);
+  return r > 0.58;
+}
+
+function villagePosForCell(vgx, vgz, seed) {
+  const r1 = hash2(vgx * 101 + 3, vgz * 131 + 7, seed + 101);
+  const r2 = hash2(vgx * 107 + 13, vgz * 149 + 17, seed + 202);
+  const offX = (r1 - 0.5) * VILLAGE_GRID * 0.4;
+  const offZ = (r2 - 0.5) * VILLAGE_GRID * 0.4;
+  return {
+    x: vgx * VILLAGE_GRID + VILLAGE_GRID * 0.5 + offX,
+    z: vgz * VILLAGE_GRID + VILLAGE_GRID * 0.5 + offZ,
+  };
+}
+
+function buildHouse(x, y, z, rot, rand) {
+  const g = new THREE.Group();
+  const w = 2.8 + rand() * 1.4;
+  const d = 2.4 + rand() * 1.2;
+  const height = 2 + rand() * 0.6;
+  const walls = new THREE.Mesh(new THREE.BoxGeometry(w, height, d), wallMat);
+  walls.position.y = height / 2;
+  g.add(walls);
+  // Door (small darker box on the front)
+  const door = new THREE.Mesh(
+    new THREE.BoxGeometry(0.7, 1.2, 0.08),
+    new THREE.MeshLambertMaterial({ color: 0x3a2010 }),
+  );
+  door.position.set(0, 0.6, d / 2 + 0.01);
+  g.add(door);
+  // Roof — pyramid (cone with 4 segments)
+  const roof = new THREE.Mesh(
+    new THREE.ConeGeometry(Math.max(w, d) * 0.78, 1.4, 4),
+    roofMat,
+  );
+  roof.position.y = height + 0.7;
+  roof.rotation.y = Math.PI / 4;
+  g.add(roof);
+  g.position.set(x, y, z);
+  g.rotation.y = rot;
+  return g;
+}
+
+function buildWell(x, y, z) {
+  const g = new THREE.Group();
+  const ring = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.9, 0.9, 0.8, 10),
+    stoneMat,
+  );
+  ring.position.y = 0.4;
+  g.add(ring);
+  // Posts + roof
+  const postGeo = new THREE.CylinderGeometry(0.08, 0.08, 1.6, 5);
+  for (const dx of [-0.7, 0.7]) {
+    const post = new THREE.Mesh(postGeo, wellWoodMat);
+    post.position.set(dx, 1.2, 0);
+    g.add(post);
+  }
+  const wroof = new THREE.Mesh(
+    new THREE.ConeGeometry(1.1, 0.5, 4),
+    roofMat,
+  );
+  wroof.position.y = 2.3;
+  wroof.rotation.y = Math.PI / 4;
+  g.add(wroof);
+  g.position.set(x, y, z);
+  return g;
+}
+
+function buildNPC(x, y, z, name, rand) {
+  const g = new THREE.Group();
+  // Body (slightly shorter than the player)
+  const body = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.22, 0.24, 1.1, 8),
+    npcShirtMat,
+  );
+  body.position.y = 0.7;
+  g.add(body);
+  // Head
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), npcSkinMat);
+  head.position.y = 1.45;
+  g.add(head);
+  // Simple hat (triangle cone)
+  const hat = new THREE.Mesh(
+    new THREE.ConeGeometry(0.24, 0.3, 8),
+    new THREE.MeshLambertMaterial({ color: 0x4a2810 }),
+  );
+  hat.position.y = 1.68;
+  g.add(hat);
+
+  g.position.set(x, y, z);
+  g.rotation.y = rand() * Math.PI * 2;
+  g.userData = { kind: 'npc', name, hasQuest: false, questId: null, offered: false };
+  return g;
+}
+
+function addQuestMarker(npcGroup) {
+  const marker = new THREE.Group();
+  const bar = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.42, 0.10), markerMat);
+  bar.position.y = 0.0;
+  const dot = new THREE.Mesh(new THREE.BoxGeometry(0.10, 0.10, 0.10), markerMat);
+  dot.position.y = -0.32;
+  marker.add(bar, dot);
+  marker.position.y = 2.2;
+  marker.userData.isQuestMarker = true;
+  npcGroup.add(marker);
+  npcGroup.userData.questMarker = marker;
+}
+
+function buildVillage(worldX, worldZ, vgKey) {
+  const seed = save.worldSeed;
+  const lvl  = worldLevel();
+  const rand = mulberry32(
+    (vgKey.charCodeAt(0) * 1000003) ^ (seed * 2654435761) ^ vgKey.length,
+  );
+
+  const centerY = terrainHeight(worldX, worldZ, seed, lvl);
+  const group = new THREE.Group();
+  group.position.set(0, 0, 0);
+
+  // Central well
+  group.add(buildWell(worldX, centerY, worldZ));
+
+  // Houses arranged in a rough circle around the well
+  const nHouses = 4 + Math.floor(rand() * 3);
+  for (let i = 0; i < nHouses; i++) {
+    const angle = (i / nHouses) * Math.PI * 2 + rand() * 0.4;
+    const r = 6.5 + rand() * 3;
+    const hx = worldX + Math.cos(angle) * r;
+    const hz = worldZ + Math.sin(angle) * r;
+    const hy = terrainHeight(hx, hz, seed, lvl);
+    group.add(buildHouse(hx, hy, hz, angle + Math.PI, rand));
+  }
+
+  // NPCs walking (well, standing) around the square
+  const nNPCs = 2 + Math.floor(rand() * 2);
+  const npcs = [];
+  for (let i = 0; i < nNPCs; i++) {
+    const r = 1.5 + rand() * 4;
+    const a = rand() * Math.PI * 2;
+    const nx = worldX + Math.cos(a) * r;
+    const nz = worldZ + Math.sin(a) * r;
+    const ny = terrainHeight(nx, nz, seed, lvl);
+    const name = NPC_NAMES[Math.floor(rand() * NPC_NAMES.length)];
+    const npc = buildNPC(nx, ny, nz, name, rand);
+    // First NPC in each village offers a quest
+    if (i === 0) {
+      npc.userData.hasQuest = true;
+      npc.userData.questId = pickQuestIdFor(vgKey);
+      addQuestMarker(npc);
+    }
+    group.add(npc);
+    npcs.push(npc);
+  }
+
+  worldGroup.add(group);
+  return { group, worldX, worldZ, npcs, key: vgKey };
+}
+
+function disposeVillage(v) {
+  if (!v) return;
+  worldGroup.remove(v.group);
+  v.group.traverse(obj => {
+    if (obj.geometry) obj.geometry.dispose();
+    // materials are shared — do not dispose
+  });
+}
+
+function ensureVillages() {
+  const pvx = Math.floor(player.pos.x / VILLAGE_GRID);
+  const pvz = Math.floor(player.pos.z / VILLAGE_GRID);
+  for (let dx = -VILLAGE_VIEW; dx <= VILLAGE_VIEW; dx++) {
+    for (let dz = -VILLAGE_VIEW; dz <= VILLAGE_VIEW; dz++) {
+      const vgx = pvx + dx;
+      const vgz = pvz + dz;
+      const key = vgx + ',' + vgz;
+      if (villages.has(key)) continue;
+      if (hasVillageAt(vgx, vgz, save.worldSeed)) {
+        const { x, z } = villagePosForCell(vgx, vgz, save.worldSeed);
+        villages.set(key, buildVillage(x, z, key));
+      } else {
+        villages.set(key, null);
+      }
+    }
+  }
+  // Dispose far cells (hysteresis)
+  for (const [key, v] of villages) {
+    const [vgx, vgz] = key.split(',').map(Number);
+    if (Math.abs(vgx - pvx) > VILLAGE_VIEW + 1 || Math.abs(vgz - pvz) > VILLAGE_VIEW + 1) {
+      disposeVillage(v);
+      villages.delete(key);
+    }
+  }
+}
+
+function clearAllVillages() {
+  for (const [, v] of villages) disposeVillage(v);
+  villages.clear();
+}
+
+// List nearby villages (for the minimap)
+function getNearbyVillages() {
+  const out = [];
+  for (const [, v] of villages) {
+    if (v) out.push({ x: v.worldX, z: v.worldZ, type: 'village', hasQuest: v.npcs.some(n => n.userData.hasQuest && !n.userData.offered) });
+  }
+  return out;
 }
 
 // =============================================================================
@@ -655,6 +1040,8 @@ function dropFood(point) {
   });
   // Spawn a new bird if we don't have many, proportional to tier
   if (birds.length < MAX_BIRDS && Math.random() < 0.35 + tier * 0.1) spawnBird();
+  // Quest progress (drop_tier objective)
+  questEvent('drop_tier', { tier });
 }
 
 // Drop food at the player's feet (or slightly in front)
@@ -682,6 +1069,117 @@ function updateFoods(dt) {
       foods.splice(i, 1);
     }
   }
+}
+
+// =============================================================================
+// Quest system
+// =============================================================================
+// Quest templates — parameterised pools from which each village draws
+const QUEST_TEMPLATES = [
+  {
+    id: 'feed_basic',
+    title: 'Les premiers grains',
+    desc: 'Nourris <b>5</b> oiseaux pour gagner leur confiance.',
+    objective: { type: 'feed', target: 5 },
+    reward: { xp: 30 },
+  },
+  {
+    id: 'drop_berries',
+    title: 'Récolte de baies',
+    desc: 'Dépose <b>3</b> baies (tier 2) pour les voyageurs ailés.',
+    objective: { type: 'drop_tier', tier: 1, target: 3 },
+    reward: { xp: 60 },
+  },
+  {
+    id: 'explore_far',
+    title: "L'appel du large",
+    desc: 'Marche <b>200</b> unités depuis ce village.',
+    objective: { type: 'distance', target: 200 },
+    reward: { xp: 80 },
+  },
+  {
+    id: 'feed_many',
+    title: 'Le grand festin',
+    desc: 'Nourris <b>15</b> oiseaux supplémentaires.',
+    objective: { type: 'feed', target: 15 },
+    reward: { xp: 120 },
+  },
+];
+
+function pickQuestIdFor(vgKey) {
+  const h = hash2(vgKey.charCodeAt(0) * 7, vgKey.length * 11, 31337);
+  return QUEST_TEMPLATES[Math.floor(h * QUEST_TEMPLATES.length)].id;
+}
+function getQuestTemplate(id) {
+  return QUEST_TEMPLATES.find(q => q.id === id);
+}
+
+// Active quest state (kept in memory only — persisted on save)
+if (!save.activeQuests) save.activeQuests = [];
+if (!save.completedQuests) save.completedQuests = [];
+
+function acceptQuest(tmpl, fromNpc) {
+  if (save.activeQuests.some(q => q.id === tmpl.id)) return false;
+  save.activeQuests.push({
+    id: tmpl.id,
+    progress: 0,
+    startX: player.pos.x,
+    startZ: player.pos.z,
+    giverVgKey: fromNpc.parent?.userData?.vgKey || null,
+  });
+  if (fromNpc) {
+    fromNpc.userData.offered = true;
+    // Remove the marker from the NPC
+    if (fromNpc.userData.questMarker) {
+      fromNpc.remove(fromNpc.userData.questMarker);
+      fromNpc.userData.questMarker = null;
+    }
+  }
+  persist();
+  updateQuestTracker();
+  showToast(`Nouvelle quête : <b>${tmpl.title}</b>`);
+  return true;
+}
+
+function completeQuest(q) {
+  const tmpl = getQuestTemplate(q.id);
+  if (!tmpl) return;
+  save.completedQuests.push(q.id);
+  save.activeQuests = save.activeQuests.filter(x => x !== q);
+  if (tmpl.reward?.xp) gainXp(tmpl.reward.xp);
+  showToast(`Quête complétée : <b>${tmpl.title}</b> (+${tmpl.reward?.xp || 0} ◈)`);
+  persist();
+  updateQuestTracker();
+}
+
+function questEvent(type, extra = {}) {
+  let changed = false;
+  for (const q of save.activeQuests) {
+    const tmpl = getQuestTemplate(q.id);
+    if (!tmpl) continue;
+    const o = tmpl.objective;
+    if (o.type !== type) continue;
+    if (type === 'drop_tier' && extra.tier !== o.tier) continue;
+    q.progress = Math.min(o.target, q.progress + (extra.amount || 1));
+    changed = true;
+    if (q.progress >= o.target) completeQuest(q);
+  }
+  if (changed) updateQuestTracker();
+}
+
+function updateQuestDistances() {
+  let changed = false;
+  for (const q of save.activeQuests) {
+    const tmpl = getQuestTemplate(q.id);
+    if (!tmpl || tmpl.objective.type !== 'distance') continue;
+    const d = Math.hypot(player.pos.x - q.startX, player.pos.z - q.startZ);
+    if (d > q.progress) {
+      q.progress = Math.min(tmpl.objective.target, d);
+      changed = true;
+      if (q.progress >= tmpl.objective.target) completeQuest(q);
+    }
+  }
+  if (changed) updateQuestTracker();
 }
 
 // =============================================================================
@@ -872,6 +1370,7 @@ function updateBirds(dt) {
     if (best && b.pos.distanceTo(best.pos) < 1.6) {
       b.energy += best.energy * 10;
       gainXp(best.energy);
+      questEvent('feed');
       // remove food
       const idx = foods.indexOf(best);
       if (idx !== -1) {
@@ -925,6 +1424,185 @@ const $foodbar  = document.getElementById('foodbar');
 const $toast    = document.getElementById('unlock');
 const $regen    = document.getElementById('regenBtn');
 const $reset    = document.getElementById('resetBtn');
+const $questTracker = document.getElementById('questTracker');
+const $dialog       = document.getElementById('dialog');
+const $dialogName   = document.getElementById('dialogName');
+const $dialogText   = document.getElementById('dialogText');
+const $dialogAccept = document.getElementById('dialogAccept');
+const $dialogClose  = document.getElementById('dialogClose');
+const $interactPrompt = document.getElementById('interactPrompt');
+const $miniCanvas   = document.getElementById('minimap');
+const $miniCtx      = $miniCanvas ? $miniCanvas.getContext('2d') : null;
+
+// --- Quest tracker panel ------------------------------------------------
+function updateQuestTracker() {
+  if (!$questTracker) return;
+  if (save.activeQuests.length === 0) {
+    $questTracker.classList.add('empty');
+    $questTracker.innerHTML = '<div class="empty-note">Pas de quête active.<br>Parle aux villageois avec un <span class="mark">!</span></div>';
+    return;
+  }
+  $questTracker.classList.remove('empty');
+  $questTracker.innerHTML = save.activeQuests.map(q => {
+    const t = getQuestTemplate(q.id);
+    if (!t) return '';
+    const unit = t.objective.type === 'distance' ? 'm' : '';
+    const target = t.objective.target;
+    const prog = Math.floor(q.progress);
+    const pct = Math.min(100, (prog / target) * 100);
+    return `
+      <div class="q">
+        <div class="q-title">${t.title}</div>
+        <div class="q-bar"><div class="q-fill" style="width:${pct}%"></div></div>
+        <div class="q-prog">${prog}${unit} / ${target}${unit}</div>
+      </div>
+    `;
+  }).join('');
+}
+
+// --- Dialog modal --------------------------------------------------------
+let dialogNpc = null;
+let dialogQuest = null;
+function openDialog(npc) {
+  if (!$dialog) return;
+  dialogNpc = npc;
+  const tmpl = getQuestTemplate(npc.userData.questId);
+  dialogQuest = tmpl;
+  $dialogName.textContent = npc.userData.name || 'Villageois';
+  if (tmpl && !save.activeQuests.some(q => q.id === tmpl.id) && !save.completedQuests.includes(tmpl.id)) {
+    $dialogText.innerHTML = `<b>« ${tmpl.title} »</b><br><br>${tmpl.desc}<br><br><i>Récompense : +${tmpl.reward.xp} ◈ essence</i>`;
+    $dialogAccept.style.display = '';
+    $dialogAccept.textContent = 'Accepter';
+  } else if (tmpl && save.completedQuests.includes(tmpl.id)) {
+    $dialogText.innerHTML = `"Merci encore, bûcheron. Tu as aidé notre village."`;
+    $dialogAccept.style.display = 'none';
+  } else if (tmpl) {
+    $dialogText.innerHTML = `"N'oublie pas : <b>${tmpl.title}</b>. Reviens quand ce sera fait."`;
+    $dialogAccept.style.display = 'none';
+  } else {
+    $dialogText.innerHTML = `"Bonne route, bûcheron !"`;
+    $dialogAccept.style.display = 'none';
+  }
+  $dialog.classList.remove('hidden');
+}
+function closeDialog() {
+  if (!$dialog) return;
+  $dialog.classList.add('hidden');
+  dialogNpc = null;
+  dialogQuest = null;
+}
+
+// --- Interaction prompt (proximity-based) --------------------------------
+let nearbyNpc = null;
+function updateInteraction() {
+  // Find closest NPC within 3 units with a dialog to show
+  let best = null, bestDist = 3.5;
+  for (const [, v] of villages) {
+    if (!v) continue;
+    for (const n of v.npcs) {
+      const d = Math.hypot(n.position.x - player.pos.x, n.position.z - player.pos.z);
+      if (d < bestDist) { bestDist = d; best = n; }
+    }
+  }
+  nearbyNpc = best;
+  if ($interactPrompt) {
+    if (best) {
+      $interactPrompt.classList.remove('hidden');
+      $interactPrompt.innerHTML = `Parler à <b>${best.userData.name}</b> — <span class="key">E</span>`;
+    } else {
+      $interactPrompt.classList.add('hidden');
+    }
+  }
+}
+
+// --- Minimap drawing -----------------------------------------------------
+const MINIMAP_RANGE = 180; // world units shown in the full minimap width
+let minimapAcc = 0;
+function drawMinimap() {
+  if (!$miniCtx) return;
+  const ctx = $miniCtx;
+  const W = $miniCanvas.width, H = $miniCanvas.height;
+  const cx = W / 2, cy = H / 2;
+  const R = Math.min(cx, cy) - 2;
+  ctx.clearRect(0, 0, W, H);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, R, 0, Math.PI * 2);
+  ctx.clip();
+
+  // Background tinted by current biome
+  const b = biomeAt(player.pos.x, player.pos.z, save.worldSeed);
+  ctx.fillStyle = '#' + b.fog.toString(16).padStart(6, '0');
+  ctx.fillRect(0, 0, W, H);
+
+  // Terrain relief shading (low-res grid)
+  const step = 6;
+  for (let y = 0; y < H; y += step) {
+    for (let x = 0; x < W; x += step) {
+      const wx = player.pos.x + ((x - cx) / R) * MINIMAP_RANGE;
+      const wz = player.pos.z + ((y - cy) / R) * MINIMAP_RANGE;
+      const h = terrainHeight(wx, wz, save.worldSeed, worldLevel());
+      const tint = Math.max(-0.3, Math.min(0.3, h / 50));
+      if (tint > 0) {
+        ctx.fillStyle = `rgba(255,255,255,${tint * 0.7})`;
+      } else {
+        ctx.fillStyle = `rgba(0,0,0,${-tint * 0.7})`;
+      }
+      ctx.fillRect(x, y, step, step);
+    }
+  }
+
+  // Villages
+  for (const v of getNearbyVillages()) {
+    const mx = cx + ((v.x - player.pos.x) / MINIMAP_RANGE) * R;
+    const my = cy + ((v.z - player.pos.z) / MINIMAP_RANGE) * R;
+    const distSq = (mx - cx) * (mx - cx) + (my - cy) * (my - cy);
+    if (distSq > R * R) continue;
+    // Village square
+    ctx.fillStyle = '#fff1b0';
+    ctx.fillRect(mx - 3, my - 3, 6, 6);
+    // Quest marker (gold ring)
+    if (v.hasQuest) {
+      ctx.beginPath();
+      ctx.arc(mx, my, 6, 0, Math.PI * 2);
+      ctx.strokeStyle = '#ffd23a';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+  }
+
+  // Player dot + direction arrow
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(player.yaw);
+  ctx.beginPath();
+  ctx.moveTo(0, -7);
+  ctx.lineTo(-4, 4);
+  ctx.lineTo(4, 4);
+  ctx.closePath();
+  ctx.fillStyle = '#ff9f40';
+  ctx.strokeStyle = '#000';
+  ctx.lineWidth = 1.5;
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+
+  ctx.restore();
+
+  // Border ring
+  ctx.beginPath();
+  ctx.arc(cx, cy, R, 0, Math.PI * 2);
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // Cardinal N marker (always at top, no rotation)
+  ctx.fillStyle = 'rgba(255,255,255,0.8)';
+  ctx.font = 'bold 11px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('N', cx, 12);
+}
 
 function buildFoodbar() {
   $foodbar.innerHTML = '';
@@ -995,15 +1673,62 @@ $regen.addEventListener('click', () => {
 $reset.addEventListener('click', () => {
   if (!confirm('Tout réinitialiser ?')) return;
   save = defaultSave();
+  save.activeQuests = [];
+  save.completedQuests = [];
   persist();
   birds.length = 0;
   for (const f of foods) { scene.remove(f.mesh); f.mesh.material.dispose(); }
   foods.length = 0;
+  clearAllVillages();
   lastLevel = worldLevel();
   buildWorld();
   placePlayerOnGround();
   buildFoodbar();
   updateHUD();
+  updateQuestTracker();
+});
+
+// --- Music toggle (Radio Meuh stream) ---
+const $music = document.getElementById('bgm');
+const $musicBtn = document.getElementById('musicBtn');
+let musicPlaying = false;
+$musicBtn?.addEventListener('click', () => {
+  if (!$music) return;
+  if (musicPlaying) {
+    $music.pause();
+    musicPlaying = false;
+    $musicBtn.classList.remove('active');
+    $musicBtn.textContent = '♪';
+  } else {
+    // Play the stream. If it fails (CORS / network / offline), show a toast.
+    $music.play().then(() => {
+      musicPlaying = true;
+      $musicBtn.classList.add('active');
+      $musicBtn.textContent = '♫';
+      showToast('Radio Meuh — en direct 🎸');
+    }).catch(err => {
+      showToast('Musique indisponible — <i>' + (err.message || 'erreur') + '</i>');
+    });
+  }
+});
+
+// --- Dialog modal wiring ---
+$dialogAccept?.addEventListener('click', () => {
+  if (dialogQuest && dialogNpc) {
+    if (acceptQuest(dialogQuest, dialogNpc)) {
+      closeDialog();
+    }
+  }
+});
+$dialogClose?.addEventListener('click', () => closeDialog());
+
+function tryInteract() {
+  if (nearbyNpc) openDialog(nearbyNpc);
+}
+// Interact button (mobile) and keyboard
+document.getElementById('btnInteract')?.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  tryInteract();
 });
 
 // =============================================================================
@@ -1158,18 +1883,45 @@ function loop() {
 
   updatePlayer(dt);
   ensureVisibleChunks();
+  ensureVillages();
+  updateBiomeTracking(dt);
   updateBirds(dt);
   updateFoods(dt);
   renderBirds();
+  updateInteraction();
+  updateQuestDistances();
 
   // Occasional spawn if population is low and xp allows
   if (birds.length < Math.min(12 + worldLevel() * 8, MAX_BIRDS)) {
     if (Math.random() < dt * 0.4) spawnBird();
   }
 
+  // Rotate quest markers for visibility
+  for (const [, v] of villages) {
+    if (!v) continue;
+    for (const n of v.npcs) {
+      if (n.userData.questMarker) {
+        n.userData.questMarker.rotation.y += dt * 2;
+        n.userData.questMarker.position.y = 2.2 + Math.sin(now * 0.003) * 0.12;
+      }
+    }
+  }
+
   hudAcc += dt;
-  if (hudAcc > 0.25) { updateHUD(); hudAcc = 0; }
+  if (hudAcc > 0.25) {
+    updateHUD();
+    hudAcc = 0;
+  }
+
+  minimapAcc += dt;
+  if (minimapAcc > 0.15) {
+    drawMinimap();
+    minimapAcc = 0;
+  }
 
   renderer.render(scene, camera);
 }
+
+// Initial quest tracker pass (after all HUD refs are set)
+updateQuestTracker();
 loop();

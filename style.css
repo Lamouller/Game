@@ -209,3 +209,185 @@ body.touch #crosshair { display: none; }
 .touch-only { display: none; }
 body.touch .touch-only { display: inline; }
 body.touch .desktop-only { display: none; }
+
+/* --- Top right: minimap + quest tracker --- */
+#hud .topRight {
+  position: absolute;
+  top: 70px;
+  right: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  pointer-events: none;
+}
+#minimap {
+  width: 160px;
+  height: 160px;
+  border-radius: 50%;
+  background: rgba(10, 18, 28, 0.55);
+  backdrop-filter: blur(6px);
+  border: 2px solid rgba(140, 200, 255, 0.25);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
+  pointer-events: auto;
+}
+#questTracker {
+  width: 230px;
+  background: rgba(10, 18, 28, 0.6);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(140, 200, 255, 0.18);
+  border-radius: 10px;
+  padding: 10px 12px;
+  pointer-events: auto;
+  font-size: 12px;
+  line-height: 1.35;
+}
+#questTracker.empty .empty-note { opacity: 0.55; font-style: italic; text-align: right; }
+#questTracker .mark { color: #ffd23a; font-weight: 700; }
+#questTracker .q { margin: 4px 0 10px 0; }
+#questTracker .q:last-child { margin-bottom: 0; }
+#questTracker .q-title { font-weight: 600; color: #ffe99a; margin-bottom: 4px; }
+#questTracker .q-bar {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  overflow: hidden;
+}
+#questTracker .q-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #7ad7ff, #ffd23a);
+  transition: width 0.3s ease;
+}
+#questTracker .q-prog { font-size: 11px; opacity: 0.7; margin-top: 2px; }
+
+/* --- Biome entry banner --- */
+#biomeBanner {
+  position: fixed;
+  top: 25%;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 42px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #ffe99a;
+  text-shadow:
+    0 0 20px rgba(0, 0, 0, 0.9),
+    0 2px 6px rgba(0, 0, 0, 0.7);
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(-10px);
+  transition: opacity 0.8s, transform 0.8s;
+}
+#biomeBanner.show {
+  opacity: 1;
+  transform: translateY(0);
+}
+#biomeBanner.hidden { display: none; }
+
+/* --- Interact prompt --- */
+#interactPrompt {
+  position: fixed;
+  left: 50%;
+  bottom: 190px;
+  transform: translateX(-50%);
+  background: rgba(10, 18, 28, 0.75);
+  backdrop-filter: blur(4px);
+  border: 1px solid rgba(140, 200, 255, 0.35);
+  border-radius: 22px;
+  padding: 8px 18px;
+  font-size: 13px;
+  pointer-events: none;
+  z-index: 5;
+}
+#interactPrompt.hidden { display: none; }
+#interactPrompt .key {
+  display: inline-block;
+  background: rgba(120, 200, 255, 0.25);
+  border: 1px solid rgba(120, 200, 255, 0.5);
+  border-radius: 4px;
+  padding: 1px 6px;
+  margin-left: 6px;
+  font-weight: 700;
+  font-size: 11px;
+}
+
+/* --- Dialog modal --- */
+#dialog {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5, 10, 18, 0.55);
+  backdrop-filter: blur(3px);
+  z-index: 10;
+  pointer-events: auto;
+}
+#dialog.hidden { display: none; }
+#dialog .panel {
+  background: linear-gradient(180deg, rgba(18, 28, 42, 0.95), rgba(10, 18, 28, 0.95));
+  border: 2px solid rgba(140, 200, 255, 0.35);
+  border-radius: 14px;
+  padding: 18px 20px;
+  max-width: 460px;
+  width: calc(100% - 40px);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+#dialog .dialog-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid rgba(140, 200, 255, 0.15);
+  padding-bottom: 10px;
+  margin-bottom: 14px;
+}
+#dialog #dialogName {
+  font-size: 18px;
+  font-weight: 700;
+  color: #ffd23a;
+}
+#dialog #dialogClose {
+  background: transparent;
+  border: none;
+  color: #ffffff;
+  font-size: 26px;
+  cursor: pointer;
+  padding: 0 8px;
+}
+#dialog .dialog-text {
+  font-size: 14px;
+  line-height: 1.55;
+  margin-bottom: 16px;
+  font-style: italic;
+  opacity: 0.95;
+}
+#dialog .dialog-text b { font-style: normal; color: #ffe99a; }
+#dialog .dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+#dialog button.primary {
+  background: linear-gradient(180deg, #3a7acc, #1f4e94);
+  border: 1px solid #7ad7ff;
+  color: #fff;
+  padding: 10px 22px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+}
+#dialog button.primary:hover { background: linear-gradient(180deg, #4a8adc, #2f5ea4); }
+
+/* Music toggle button */
+#musicBtn {
+  font-size: 18px;
+  padding: 8px 14px;
+  min-width: 44px;
+}
+#musicBtn.active {
+  color: #ffd23a;
+  border-color: rgba(255, 210, 60, 0.6);
+  box-shadow: 0 0 14px rgba(255, 210, 60, 0.3);
+}
