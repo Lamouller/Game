@@ -20,9 +20,35 @@ body {
   left: 12px;
   right: 12px;
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
   pointer-events: none;
+  /* Leave room on the right for the minimap */
+  padding-right: 184px;
+}
+
+/* On narrow screens (phones), the minimap is smaller and the top row
+   reserves less horizontal space for it, letting the music / regen /
+   reset buttons wrap onto a second line that stays tappable. */
+@media (max-width: 600px) {
+  #hud .top {
+    padding-right: 12px; /* no minimap reservation */
+  }
+  #hud .topRight {
+    top: unset !important;
+    bottom: 260px !important;
+    right: 10px !important;
+  }
+  #minimap {
+    width: 110px !important;
+    height: 110px !important;
+  }
+  #questTracker { display: none; }
+  #hud .top .stat small { display: none; }
+  #hud .top .stat {
+    padding: 6px 9px;
+  }
 }
 #hud .bottom {
   position: absolute;
