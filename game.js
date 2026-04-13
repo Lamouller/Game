@@ -287,6 +287,14 @@ const player = {
   group: new THREE.Group(),
 };
 
+// Virtual input (joystick / touch buttons). Shared with desktop keys.
+const touchInput = {
+  moveX: 0,     // -1..1 strafe
+  moveY: 0,     // -1..1 forward(+)/backward(-)
+  jump:  false, // pulse — consumed once
+  sprint: false,
+};
+
 // Simple low-poly character: body capsule + head + arm hint
 {
   const bodyMat = new THREE.MeshLambertMaterial({ color: 0x4a7fff });
@@ -337,14 +345,25 @@ function updatePlayer(dt) {
   forward.set(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
   right.set(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
 
-  moveDir.set(0, 0, 0);
-  if (keys['KeyW'] || keys['ArrowUp'])    moveDir.add(forward);
-  if (keys['KeyS'] || keys['ArrowDown'])  moveDir.sub(forward);
-  if (keys['KeyD'] || keys['ArrowRight']) moveDir.add(right);
-  if (keys['KeyA'] || keys['ArrowLeft'])  moveDir.sub(right);
-  if (moveDir.lengthSq() > 0) moveDir.normalize();
+  // Keyboard input
+  let mFwd = 0, mStr = 0;
+  if (keys['KeyW'] || keys['ArrowUp'])    mFwd += 1;
+  if (keys['KeyS'] || keys['ArrowDown'])  mFwd -= 1;
+  if (keys['KeyD'] || keys['ArrowRight']) mStr += 1;
+  if (keys['KeyA'] || keys['ArrowLeft'])  mStr -= 1;
+  // Virtual joystick input (touch)
+  mFwd += touchInput.moveY;
+  mStr += touchInput.moveX;
+  mFwd = Math.max(-1, Math.min(1, mFwd));
+  mStr = Math.max(-1, Math.min(1, mStr));
 
-  const speed = (keys['ShiftLeft'] || keys['ShiftRight']) ? PLAYER_SPRINT : PLAYER_WALK;
+  moveDir.set(0, 0, 0);
+  moveDir.addScaledVector(forward, mFwd);
+  moveDir.addScaledVector(right,   mStr);
+  if (moveDir.lengthSq() > 1) moveDir.normalize();
+
+  const sprinting = keys['ShiftLeft'] || keys['ShiftRight'] || touchInput.sprint;
+  const speed = sprinting ? PLAYER_SPRINT : PLAYER_WALK;
   player.vel.x = moveDir.x * speed;
   player.vel.z = moveDir.z * speed;
 
@@ -352,10 +371,11 @@ function updatePlayer(dt) {
   player.vel.y -= GRAVITY * dt;
 
   // Jump
-  if (player.onGround && (keys['Space'] || keys['KeyJ'])) {
+  if (player.onGround && (keys['Space'] || keys['KeyJ'] || touchInput.jump)) {
     player.vel.y = PLAYER_JUMP;
     player.onGround = false;
   }
+  touchInput.jump = false; // consume one-shot
 
   player.pos.addScaledVector(player.vel, dt);
 
@@ -774,29 +794,104 @@ $reset.addEventListener('click', () => {
 });
 
 // =============================================================================
-// Input: click to feed, right-drag to orbit, wheel to zoom
+// Input: drag canvas to look, virtual joystick & buttons for mobile
 // =============================================================================
-// Pointer lock for mouse look, click to feed at player position
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 
-canvas.addEventListener('click', () => {
-  if (document.pointerLockElement !== canvas) {
-    canvas.requestPointerLock?.();
-  } else {
-    // Already locked — clicking feeds
+// Detect touch capability to show the on-screen controls
+const isTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+if (isTouch) document.body.classList.add('touch');
+
+// --- Drag-to-look on the canvas (works for mouse + touch via PointerEvent) ---
+let lookPointerId = null;
+let lookLastX = 0, lookLastY = 0;
+let lookMoved = false;
+
+canvas.addEventListener('pointerdown', e => {
+  // Ignore if the pointer already started on a UI element (joystick, buttons)
+  if (e.target !== canvas) return;
+  if (lookPointerId !== null) return;
+  lookPointerId = e.pointerId;
+  lookLastX = e.clientX;
+  lookLastY = e.clientY;
+  lookMoved = false;
+  canvas.setPointerCapture?.(e.pointerId);
+});
+
+canvas.addEventListener('pointermove', e => {
+  if (e.pointerId !== lookPointerId) return;
+  const dx = e.clientX - lookLastX;
+  const dy = e.clientY - lookLastY;
+  lookLastX = e.clientX;
+  lookLastY = e.clientY;
+  if (Math.abs(dx) + Math.abs(dy) > 3) lookMoved = true;
+  player.yaw   -= dx * 0.005;
+  player.pitch -= dy * 0.005;
+  player.pitch = Math.max(-0.6, Math.min(1.0, player.pitch));
+});
+
+function endLook(e) {
+  if (e.pointerId !== lookPointerId) return;
+  canvas.releasePointerCapture?.(e.pointerId);
+  // Quick tap (no drag) drops food — convenient on desktop
+  if (!lookMoved && e.pointerType !== 'touch') {
     dropFoodAtPlayer();
   }
-});
+  lookPointerId = null;
+}
+canvas.addEventListener('pointerup', endLook);
+canvas.addEventListener('pointercancel', endLook);
 
-document.addEventListener('pointerlockchange', () => {
-  // Nothing special; mousemove handler checks the state
-});
+// --- Virtual joystick ---
+const joy    = document.getElementById('joystick');
+const thumb  = document.getElementById('joystickThumb');
+const JOY_MAX = 48;
+let joyPointerId = null;
+let joyCX = 0, joyCY = 0;
 
-window.addEventListener('mousemove', e => {
-  if (document.pointerLockElement !== canvas) return;
-  player.yaw   -= e.movementX * 0.0025;
-  player.pitch -= e.movementY * 0.0025;
-  player.pitch = Math.max(-0.6, Math.min(1.0, player.pitch));
+if (joy) {
+  joy.addEventListener('pointerdown', e => {
+    if (joyPointerId !== null) return;
+    joyPointerId = e.pointerId;
+    const rect = joy.getBoundingClientRect();
+    joyCX = rect.left + rect.width  / 2;
+    joyCY = rect.top  + rect.height / 2;
+    joy.setPointerCapture?.(e.pointerId);
+    e.preventDefault();
+  });
+  joy.addEventListener('pointermove', e => {
+    if (e.pointerId !== joyPointerId) return;
+    let dx = e.clientX - joyCX;
+    let dy = e.clientY - joyCY;
+    const mag = Math.hypot(dx, dy);
+    if (mag > JOY_MAX) { dx *= JOY_MAX / mag; dy *= JOY_MAX / mag; }
+    thumb.style.transform = `translate(${dx}px, ${dy}px)`;
+    touchInput.moveX =  dx / JOY_MAX;
+    touchInput.moveY = -dy / JOY_MAX; // screen up = move forward
+    touchInput.sprint = mag > JOY_MAX * 0.85;
+  });
+  const endJoy = e => {
+    if (e.pointerId !== joyPointerId) return;
+    joyPointerId = null;
+    thumb.style.transform = '';
+    touchInput.moveX = 0;
+    touchInput.moveY = 0;
+    touchInput.sprint = false;
+  };
+  joy.addEventListener('pointerup', endJoy);
+  joy.addEventListener('pointercancel', endJoy);
+}
+
+// --- Feed & Jump buttons ---
+const btnFeed = document.getElementById('btnFeed');
+const btnJump = document.getElementById('btnJump');
+btnFeed?.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  dropFoodAtPlayer();
+});
+btnJump?.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  touchInput.jump = true;
 });
 
 // =============================================================================
