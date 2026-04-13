@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
 <title>Birdlife — Whispering Woods</title>
-<link rel="stylesheet" href="style.css?v=7" />
+<link rel="stylesheet" href="style.css?v=8" />
 </head>
 <body>
 <div id="app">
@@ -75,11 +75,34 @@
     </div>
   </div>
 
+  <div id="inventoryPanel" class="bigPanel hidden">
+    <div class="panel">
+      <div class="dialog-header">
+        <div>🎒 Sacoche du bûcheron</div>
+        <button class="dialog-close-btn" data-close="inventoryPanel">×</button>
+      </div>
+      <div id="inventoryGrid"></div>
+      <div class="panel-hint">Presse <span class="key">F</span> près d'une plante pour la récolter.</div>
+    </div>
+  </div>
+
+  <div id="worldMapPanel" class="bigPanel hidden">
+    <div class="panel">
+      <div class="dialog-header">
+        <div>🗺️ Carte du monde</div>
+        <button class="dialog-close-btn" data-close="worldMapPanel">×</button>
+      </div>
+      <canvas id="worldMapCanvas" width="540" height="540"></canvas>
+      <div class="panel-hint">Les villages visités apparaissent en or. Le point orange est ta position.</div>
+    </div>
+  </div>
+
   <div id="joystick">
     <div id="joystickThumb"></div>
   </div>
   <div id="touchButtons">
     <button id="btnInteract" class="touchBtn" title="Parler">💬</button>
+    <button id="btnGather"   class="touchBtn" title="Récolter">🌾</button>
     <button id="btnJump"     class="touchBtn" title="Sauter">▲</button>
     <button id="btnFeed"     class="touchBtn feed" title="Nourrir">◈</button>
   </div>
@@ -97,6 +120,6 @@
   }
 }
 </script>
-<script type="module" src="game.js?v=7"></script>
+<script type="module" src="game.js?v=8"></script>
 </body>
 </html>
