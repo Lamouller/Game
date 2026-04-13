@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
 <title>Birdlife — Whispering Woods</title>
-<link rel="stylesheet" href="style.css?v=3" />
+<link rel="stylesheet" href="style.css?v=4" />
 </head>
 <body>
 <div id="app">
@@ -85,11 +85,10 @@
   </div>
 </div>
 
-<!-- Background music: Radio Meuh (webradio française éclectique, rock/metal/electro)
-     Flux MP3 128 kbps hébergé par Infomaniak. L'utilisateur déclenche la lecture
-     via le bouton ♪ du HUD (les navigateurs bloquent l'autoplay non sollicité). -->
-<audio id="bgm" src="https://broadcast.infomaniak.ch/radiomeuh-128.mp3"
-       preload="none" crossorigin="anonymous"></audio>
+<!-- Background music: SomaFM Metal Detector (100% metal, royalty-free listener-
+     supported radio with a proper CORS policy). User triggers playback via
+     the ♪ button (browsers block unsolicited autoplay). -->
+<audio id="bgm" src="https://ice1.somafm.com/metal-128-mp3" preload="none"></audio>
 
 <script type="importmap">
 {
@@ -98,6 +97,6 @@
   }
 }
 </script>
-<script type="module" src="game.js?v=3"></script>
+<script type="module" src="game.js?v=4"></script>
 </body>
 </html>
