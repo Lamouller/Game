@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
-<title>Birdlife — Simulation d'oiseaux</title>
+<title>Birdlife — Whispering Woods</title>
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -27,21 +27,29 @@
         <span id="worldLvl">1</span>
         <small>monde</small>
       </div>
+      <button id="musicBtn" title="Activer / couper la musique">♪</button>
       <button id="regenBtn" title="Régénérer un nouveau monde procédural">Nouveau monde</button>
       <button id="resetBtn" title="Tout réinitialiser">Reset</button>
+    </div>
+
+    <div class="topRight">
+      <canvas id="minimap" width="160" height="160"></canvas>
+      <div id="questTracker" class="empty">
+        <div class="empty-note">Pas de quête active.<br>Parle aux villageois avec un <span class="mark">!</span></div>
+      </div>
     </div>
 
     <div class="bottom">
       <div id="foodbar"></div>
       <div id="tip">
         <span class="desktop-only">
-          <b>Clic-glisser</b> pour regarder, <b>WASD</b> se déplacer,
+          <b>Clic-glisser</b> regarder, <b>WASD</b> se déplacer,
           <b>Shift</b> courir, <b>Espace</b> sauter, <b>clic</b> nourrir,
-          <b>1–5</b> choisir la nourriture.
+          <b>E</b> parler, <b>1–5</b> nourriture.
         </span>
         <span class="touch-only">
-          Joystick pour avancer, glisser à l'écran pour regarder,
-          <b>◈</b> nourrir, <b>▲</b> sauter. Choisis la nourriture dans la barre.
+          Joystick pour avancer, glisser pour regarder,
+          <b>◈</b> nourrir, <b>▲</b> sauter, <b>💬</b> parler.
         </span>
       </div>
     </div>
@@ -50,14 +58,38 @@
   <div id="unlock" class="toast hidden"></div>
   <div id="crosshair"></div>
 
+  <div id="biomeBanner" class="hidden"></div>
+
+  <div id="interactPrompt" class="hidden"></div>
+
+  <div id="dialog" class="hidden">
+    <div class="panel">
+      <div class="dialog-header">
+        <div id="dialogName">Villageois</div>
+        <button id="dialogClose" aria-label="Fermer">×</button>
+      </div>
+      <div id="dialogText" class="dialog-text">...</div>
+      <div class="dialog-actions">
+        <button id="dialogAccept" class="primary">Accepter</button>
+      </div>
+    </div>
+  </div>
+
   <div id="joystick">
     <div id="joystickThumb"></div>
   </div>
   <div id="touchButtons">
-    <button id="btnJump" class="touchBtn" title="Sauter">▲</button>
-    <button id="btnFeed" class="touchBtn feed" title="Nourrir">◈</button>
+    <button id="btnInteract" class="touchBtn" title="Parler">💬</button>
+    <button id="btnJump"     class="touchBtn" title="Sauter">▲</button>
+    <button id="btnFeed"     class="touchBtn feed" title="Nourrir">◈</button>
   </div>
 </div>
+
+<!-- Background music: Radio Meuh (webradio française éclectique, rock/metal/electro)
+     Flux MP3 128 kbps hébergé par Infomaniak. L'utilisateur déclenche la lecture
+     via le bouton ♪ du HUD (les navigateurs bloquent l'autoplay non sollicité). -->
+<audio id="bgm" src="https://broadcast.infomaniak.ch/radiomeuh-128.mp3"
+       preload="none" crossorigin="anonymous"></audio>
 
 <script type="importmap">
 {
