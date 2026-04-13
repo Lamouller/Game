@@ -104,6 +104,7 @@ window.addEventListener('keydown', e => {
   }
   if (e.code === 'KeyE' && typeof tryInteract === 'function') tryInteract();
   if (e.code === 'KeyF' && typeof tryGatherNearbyPlant === 'function') tryGatherNearbyPlant();
+  if (e.code === 'KeyP' && typeof plantSapling === 'function') plantSapling();
   if (e.code === 'KeyI' && typeof toggleInventoryPanel === 'function') toggleInventoryPanel();
   if (e.code === 'KeyM' && typeof toggleWorldMapPanel === 'function') toggleWorldMapPanel();
   if (e.code === 'KeyA' && typeof toggleAtlasPanel === 'function') toggleAtlasPanel();
@@ -381,6 +382,22 @@ function buildChunk(cx, cz) {
   group.add(trunks);
   group.add(foliage);
 
+  // Apply persisted chopped state — trees the player has cut down already
+  // should come back as zero-scale matrices when the chunk is re-streamed.
+  const choppedKey = cx + ',' + cz;
+  const choppedSet = save.choppedTrees && save.choppedTrees[choppedKey];
+  if (choppedSet && choppedSet.length) {
+    const zeroMat = new THREE.Matrix4().makeScale(0.0001, 0.0001, 0.0001);
+    for (const idx of choppedSet) {
+      if (idx < placed) {
+        foliage.setMatrixAt(idx, zeroMat);
+        trunks.setMatrixAt(idx, zeroMat);
+      }
+    }
+    foliage.instanceMatrix.needsUpdate = true;
+    trunks.instanceMatrix.needsUpdate = true;
+  }
+
   // --- Rocks ---
   const nRocks = 3 + Math.floor(rand() * (3 + lvl));
   const rocks = new THREE.InstancedMesh(rockGeoSrc, mats.rock, nRocks);
@@ -417,7 +434,7 @@ function buildChunk(cx, cz) {
   }
 
   worldGroup.add(group);
-  return { group, cx, cz };
+  return { group, cx, cz, foliage, trunks, treeCount: placed };
 }
 
 function disposeChunk(ch) {
@@ -1606,7 +1623,10 @@ function getQuestTemplate(id) {
 if (!save.activeQuests) save.activeQuests = [];
 if (!save.completedQuests) save.completedQuests = [];
 // Inventory of gathered resources
-if (!save.inventory) save.inventory = { bois: 0, herbe: 0, baie: 0, nectar: 0, essence: 0, plume: 0 };
+if (!save.inventory) save.inventory = { bois: 0, herbe: 0, baie: 0, nectar: 0, essence: 0, plume: 0, graine: 0 };
+if (save.inventory.graine === undefined) save.inventory.graine = 0;
+// Map of "cx,cz" -> [instanceIdx] of trees the player has chopped down
+if (!save.choppedTrees) save.choppedTrees = {};
 // POIs visited by the player (map: "vgx,vgz" -> { x, z, visitedAt })
 if (!save.discoveredVillages) save.discoveredVillages = {};
 // Species atlas (id -> { hue, count, firstSeen, name })
@@ -2092,30 +2112,100 @@ const GATHER_MAP = [
 ];
 
 function tryGatherNearbyPlant() {
-  // Trigger the chop animation even if nothing is close so the motion
-  // still feels natural when the player mistimes a gather.
+  // Always play the chop animation so the action feels responsive
   player.axeSwing = 0.55;
 
+  // 1) Closest pollinated plant within 3.5 units
   let best = null, bestDist = 3.5;
   let bestIdx = -1;
   for (let i = 0; i < plants.length; i++) {
     const p = plants[i];
-    if (p.grow < 0.4) continue; // not mature enough yet
+    if (p.grow < 0.4) continue;
     const dx = p.pos.x - player.pos.x;
     const dz = p.pos.z - player.pos.z;
     const d = Math.hypot(dx, dz);
     if (d < bestDist) { bestDist = d; best = p; bestIdx = i; }
   }
-  if (!best) return false;
-  const map = GATHER_MAP[Math.min(best.tier, GATHER_MAP.length - 1)];
-  save.inventory[map.key] = (save.inventory[map.key] || 0) + 1;
+  if (best) {
+    const map = GATHER_MAP[Math.min(best.tier, GATHER_MAP.length - 1)];
+    save.inventory[map.key] = (save.inventory[map.key] || 0) + 1;
+    persist();
+    spawnFloatingNumber('+1 ' + map.label);
+    scene.remove(best.mesh);
+    best.mesh.traverse(obj => { if (obj.material) obj.material.dispose(); });
+    plants.splice(bestIdx, 1);
+    updateInventoryPanel();
+    return true;
+  }
+
+  // 2) Nothing close → try chopping a procedural tree
+  return chopNearestTree();
+}
+
+// --- Chop a procedural chunk tree ---
+// Iterates the loaded chunks, finds the nearest non-chopped foliage instance
+// within range, zero-scales its matrices and persists the choice.
+const _treeTmpMat = new THREE.Matrix4();
+const _treeTmpPos = new THREE.Vector3();
+function chopNearestTree(maxDist = 4) {
+  let bestDist = maxDist;
+  let bestChunkKey = null;
+  let bestIdx = -1;
+  let bestChunk = null;
+  for (const [chunkKey, ch] of chunks) {
+    if (!ch || !ch.foliage) continue;
+    const choppedSet = save.choppedTrees[chunkKey] || [];
+    for (let i = 0; i < ch.treeCount; i++) {
+      if (choppedSet.includes(i)) continue;
+      ch.foliage.getMatrixAt(i, _treeTmpMat);
+      _treeTmpPos.setFromMatrixPosition(_treeTmpMat);
+      const d = _treeTmpPos.distanceTo(player.pos);
+      if (d < bestDist) {
+        bestDist = d;
+        bestChunkKey = chunkKey;
+        bestIdx = i;
+        bestChunk = ch;
+      }
+    }
+  }
+  if (bestIdx < 0) return false;
+
+  const zeroMat = new THREE.Matrix4().makeScale(0.0001, 0.0001, 0.0001);
+  bestChunk.foliage.setMatrixAt(bestIdx, zeroMat);
+  bestChunk.trunks.setMatrixAt(bestIdx, zeroMat);
+  bestChunk.foliage.instanceMatrix.needsUpdate = true;
+  bestChunk.trunks.instanceMatrix.needsUpdate = true;
+
+  if (!save.choppedTrees[bestChunkKey]) save.choppedTrees[bestChunkKey] = [];
+  save.choppedTrees[bestChunkKey].push(bestIdx);
+
+  save.inventory.bois = (save.inventory.bois || 0) + 2;
+  if (Math.random() < 0.35) {
+    save.inventory.graine = (save.inventory.graine || 0) + 1;
+    spawnFloatingNumber('+2 bois +1 graine');
+  } else {
+    spawnFloatingNumber('+2 bois');
+  }
   persist();
-  spawnFloatingNumber('+1 ' + map.label);
-  // Remove the plant with a small pop
-  scene.remove(best.mesh);
-  best.mesh.traverse(obj => { if (obj.material) obj.material.dispose(); });
-  plants.splice(bestIdx, 1);
   updateInventoryPanel();
+  return true;
+}
+
+// --- Plant a sapling in front of the player ---
+// Consumes 1 graine from the inventory and spawns a growing tree.
+function plantSapling() {
+  if (!save.inventory.graine || save.inventory.graine < 1) {
+    showToast('Il te faut au moins <b>1 graine</b> pour planter.');
+    return false;
+  }
+  const px = player.pos.x - Math.sin(player.yaw) * 2;
+  const pz = player.pos.z - Math.cos(player.yaw) * 2;
+  // tier 2 = arbuste (tree-like) from plantKinds
+  plantAtPosition(px, pz, 2);
+  save.inventory.graine--;
+  persist();
+  updateInventoryPanel();
+  player.axeSwing = 0.55; // reuse the chop anim for the planting gesture
   return true;
 }
 
@@ -2157,6 +2247,7 @@ const $dialog       = document.getElementById('dialog');
 const $dialogName   = document.getElementById('dialogName');
 const $dialogText   = document.getElementById('dialogText');
 const $dialogAccept = document.getElementById('dialogAccept');
+const $dialogTrade  = document.getElementById('dialogTrade');
 const $dialogClose  = document.getElementById('dialogClose');
 const $interactPrompt = document.getElementById('interactPrompt');
 const $miniCanvas   = document.getElementById('minimap');
@@ -2192,6 +2283,16 @@ function updateQuestTracker() {
 let dialogNpc = null;
 let dialogQuest = null;
 let dialogMode = 'none'; // 'offer' | 'turnIn' | 'inProgress' | 'done' | 'none'
+// Trade table — what each villager pays for stuff from your sacoche
+const TRADE_TABLE = [
+  { key: 'bois',   label: '🪵 Bois',   price: 5  },
+  { key: 'baie',   label: '🫐 Baie',   price: 4  },
+  { key: 'herbe',  label: '🌿 Herbe',  price: 2  },
+  { key: 'plume',  label: '🪶 Plume',  price: 8  },
+  { key: 'nectar', label: '🍯 Nectar', price: 12 },
+  { key: 'graine', label: '🌰 Graine', price: 3  },
+];
+
 function openDialog(npc) {
   if (!$dialog) return;
   dialogNpc = npc;
@@ -2201,6 +2302,9 @@ function openDialog(npc) {
   const rep = (vgKey && save.villageRep[vgKey]?.rep) || 0;
   const grade = getRepGrade(rep);
   $dialogName.textContent = (npc.userData.name || 'Villageois') + '   —   ' + grade + ' (' + rep + ')';
+
+  // Always show the Commerce button so the player can sell anywhere
+  if ($dialogTrade) $dialogTrade.style.display = '';
 
   // First: any ready quest the player can turn in to ANY NPC in this village?
   const readyQuest = save.activeQuests.find(q => q.ready);
@@ -2236,6 +2340,43 @@ function openDialog(npc) {
   }
   $dialog.classList.remove('hidden');
 }
+
+function openTradePanel() {
+  if (!$dialog) return;
+  dialogMode = 'trade';
+  $dialogAccept.style.display = 'none';
+  if ($dialogTrade) $dialogTrade.style.display = 'none';
+  const rows = TRADE_TABLE.map(t => {
+    const have = save.inventory[t.key] || 0;
+    return `
+      <div class="tradeRow">
+        <span>${t.label} — <i>${have} en stock</i></span>
+        <button data-trade="${t.key}" ${have < 1 ? 'disabled' : ''}>Vendre 1 → ${t.price} ◈</button>
+      </div>
+    `;
+  }).join('');
+  $dialogText.innerHTML = `"Qu'as-tu à vendre aujourd'hui ?"<br><div class="tradeList">${rows}</div>`;
+  // Wire the trade buttons
+  for (const btn of $dialogText.querySelectorAll('[data-trade]')) {
+    btn.addEventListener('click', () => {
+      const key = btn.getAttribute('data-trade');
+      sellItem(key);
+    });
+  }
+}
+
+function sellItem(key) {
+  const trade = TRADE_TABLE.find(t => t.key === key);
+  if (!trade) return;
+  if (!save.inventory[key] || save.inventory[key] < 1) return;
+  save.inventory[key]--;
+  gainXp(trade.price);
+  // Reputation + 2 for each trade
+  if (dialogNpc?.userData?.vgKey) addVillageRep(dialogNpc.userData.vgKey, 2);
+  persist();
+  updateInventoryPanel();
+  openTradePanel(); // refresh the rows
+}
 function closeDialog() {
   if (!$dialog) return;
   $dialog.classList.add('hidden');
@@ -2269,10 +2410,10 @@ function updateInteraction() {
 // --- Inventory panel -----------------------------------------------------
 const INV_LAYOUT = [
   { key: 'bois',    icon: '🪵', name: 'Bois' },
+  { key: 'graine',  icon: '🌰', name: 'Graine' },
   { key: 'herbe',   icon: '🌿', name: 'Herbe' },
   { key: 'baie',    icon: '🫐', name: 'Baie' },
   { key: 'nectar',  icon: '🍯', name: 'Nectar' },
-  { key: 'essence', icon: '✨', name: 'Essence' },
   { key: 'plume',   icon: '🪶', name: 'Plume' },
 ];
 function updateInventoryPanel() {
@@ -2735,6 +2876,7 @@ $dialogAccept?.addEventListener('click', () => {
     }
   }
 });
+$dialogTrade?.addEventListener('click', () => openTradePanel());
 $dialogClose?.addEventListener('click', () => closeDialog());
 
 function tryInteract() {
@@ -2913,6 +3055,10 @@ btnJump?.addEventListener('pointerdown', e => {
 document.getElementById('btnGather')?.addEventListener('pointerdown', e => {
   e.preventDefault();
   tryGatherNearbyPlant();
+});
+document.getElementById('btnPlant')?.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  plantSapling();
 });
 
 // =============================================================================
