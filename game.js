@@ -1881,15 +1881,17 @@ function loop() {
   if (dt > 0.1) dt = 0.1;
   lastT = now;
 
-  updatePlayer(dt);
-  ensureVisibleChunks();
-  ensureVillages();
-  updateBiomeTracking(dt);
-  updateBirds(dt);
-  updateFoods(dt);
-  renderBirds();
-  updateInteraction();
-  updateQuestDistances();
+  // Each subsystem is wrapped so a single failure doesn't kill the whole
+  // frame loop. Errors are logged once per subsystem to the console.
+  try { updatePlayer(dt); }       catch (e) { logOnce('updatePlayer', e); }
+  try { ensureVisibleChunks(); }  catch (e) { logOnce('ensureVisibleChunks', e); }
+  try { ensureVillages(); }       catch (e) { logOnce('ensureVillages', e); }
+  try { updateBiomeTracking(dt); } catch (e) { logOnce('updateBiomeTracking', e); }
+  try { updateBirds(dt); }        catch (e) { logOnce('updateBirds', e); }
+  try { updateFoods(dt); }        catch (e) { logOnce('updateFoods', e); }
+  try { renderBirds(); }          catch (e) { logOnce('renderBirds', e); }
+  try { updateInteraction(); }    catch (e) { logOnce('updateInteraction', e); }
+  try { updateQuestDistances(); } catch (e) { logOnce('updateQuestDistances', e); }
 
   // Occasional spawn if population is low and xp allows
   if (birds.length < Math.min(12 + worldLevel() * 8, MAX_BIRDS)) {
@@ -1897,29 +1899,39 @@ function loop() {
   }
 
   // Rotate quest markers for visibility
-  for (const [, v] of villages) {
-    if (!v) continue;
-    for (const n of v.npcs) {
-      if (n.userData.questMarker) {
-        n.userData.questMarker.rotation.y += dt * 2;
-        n.userData.questMarker.position.y = 2.2 + Math.sin(now * 0.003) * 0.12;
+  try {
+    for (const [, v] of villages) {
+      if (!v) continue;
+      for (const n of v.npcs) {
+        if (n.userData.questMarker) {
+          n.userData.questMarker.rotation.y += dt * 2;
+          n.userData.questMarker.position.y = 2.2 + Math.sin(now * 0.003) * 0.12;
+        }
       }
     }
-  }
+  } catch (e) { logOnce('questMarkerRotate', e); }
 
   hudAcc += dt;
   if (hudAcc > 0.25) {
-    updateHUD();
+    try { updateHUD(); } catch (e) { logOnce('updateHUD', e); }
     hudAcc = 0;
   }
 
   minimapAcc += dt;
   if (minimapAcc > 0.15) {
-    drawMinimap();
+    try { drawMinimap(); } catch (e) { logOnce('drawMinimap', e); }
     minimapAcc = 0;
   }
 
   renderer.render(scene, camera);
+}
+
+// Helper: log each subsystem error at most once to keep the console usable
+const _loggedErrors = new Set();
+function logOnce(tag, err) {
+  if (_loggedErrors.has(tag)) return;
+  _loggedErrors.add(tag);
+  console.error('[birdlife]', tag, err);
 }
 
 // Initial quest tracker pass (after all HUD refs are set)
