@@ -33,16 +33,17 @@ body {
    reset buttons wrap onto a second line that stays tappable. */
 @media (max-width: 600px) {
   #hud .top {
-    padding-right: 12px; /* no minimap reservation */
+    padding-right: 132px; /* reserve space for the smaller minimap */
   }
+  /* Keep the minimap in the top-right corner on mobile, just smaller */
   #hud .topRight {
-    top: unset !important;
-    bottom: 260px !important;
+    top: 10px !important;
     right: 10px !important;
+    bottom: unset !important;
   }
   #minimap {
-    width: 110px !important;
-    height: 110px !important;
+    width: 120px !important;
+    height: 120px !important;
   }
   #questTracker { display: none; }
   #hud .top .stat small { display: none; }
