@@ -982,11 +982,38 @@ function buildLumberjack(group) {
   const legR = buildLeg( 0.14);
   group.add(legL.hip, legR.hip);
 
-  // --- Torso — capsule, high-res ---
+  // --- Torso — capsule + chest/belly bumps to break the cylinder ---
+  // The base capsule gives the overall volume; the chest and belly
+  // bulges on the front (-Z) add the silhouette changes that make the
+  // character read as humanoid instead of sausage-shaped.
   const torsoGeo = new THREE.CapsuleGeometry(0.34, 0.65, 12, 24);
   const torso = new THREE.Mesh(torsoGeo, shirtMat);
   torso.position.y = 1.25;
   group.add(torso);
+  // Chest bulge — flattened sphere at the upper front of the torso
+  const chest = new THREE.Mesh(
+    new THREE.SphereGeometry(0.28, 18, 14),
+    shirtMat,
+  );
+  chest.scale.set(1.25, 0.75, 0.85);
+  chest.position.set(0, 1.42, -0.12);
+  group.add(chest);
+  // Belly bulge — rounder, lower, bigger (lumberjack beer gut)
+  const belly = new THREE.Mesh(
+    new THREE.SphereGeometry(0.32, 18, 14),
+    shirtMat,
+  );
+  belly.scale.set(1.1, 0.8, 0.8);
+  belly.position.set(0, 1.04, -0.08);
+  group.add(belly);
+  // Upper back fill — small sphere on +Z so the back isn't flat either
+  const upperBack = new THREE.Mesh(
+    new THREE.SphereGeometry(0.28, 16, 12),
+    shirtMat,
+  );
+  upperBack.scale.set(1.15, 0.7, 0.75);
+  upperBack.position.set(0, 1.38, 0.1);
+  group.add(upperBack);
 
   // Belt (thin torus) + buckle at front (-z)
   const beltGeo = new THREE.TorusGeometry(0.35, 0.055, 12, 28);
@@ -1313,7 +1340,9 @@ function buildLumberjack(group) {
   const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.09, 1.8), stripeMat);
   stripe.position.y = 0.01;
   surfboard.add(stripe);
-  surfboard.position.y = -0.03;
+  // Surfboard sits just below the feet so its top aligns with y=0 of the
+  // group (the feet plane) — half its thickness (0.04) below.
+  surfboard.position.y = -0.04;
   surfboard.visible = false;
   group.add(surfboard);
 
@@ -1393,11 +1422,11 @@ function updatePlayer(dt) {
     // Strong water drag — swimming is clearly slower than walking
     player.vel.x *= 0.55;
     player.vel.z *= 0.55;
-    // Buoyancy target: water surface reaches roughly the lumberjack's
-    // shoulders so only his head + shoulders are visibly above water.
-    // Player y is the pelvis; head is at y + 1.0; we want head ~0.4 above
-    // surface, so pelvis should sit at (waterSurface + 0.4 - 1.0) = surface - 0.6.
-    const targetY = waterSurface - 0.6 + PLAYER_HEIGHT * 0.5;
+    // Buoyancy target: the player stands ON TOP of the 0.08-thick
+    // surfboard, which is floating ON the water surface. So the feet
+    // sit at waterSurface + 0.08 and the pelvis is half a body-height
+    // above that.
+    const targetY = waterSurface + 0.08 + PLAYER_HEIGHT * 0.5;
     player.vel.y += (targetY - player.pos.y) * 4 * dt * 10;
     player.vel.y *= 0.82;
     // Space / jump = paddle up
@@ -1488,8 +1517,8 @@ function updatePlayer(dt) {
   // Arms counter-swing with extra amplitude
   const shoulderSwing = -sinP * 1.0 * moving;
   // Elbow bends when the arm is forward (natural walking motion)
-  const elbowBendL = Math.max(0, -sinP) * 0.8 * moving + 0.25;
-  const elbowBendR = Math.max(0,  sinP) * 0.8 * moving + 0.25;
+  const elbowBendL = Math.max(0, -sinP) * 0.6 * moving + 0.2;
+  const elbowBendR = Math.max(0,  sinP) * 0.6 * moving + 0.2;
 
   player.parts.armL.shoulder.rotation.x =  shoulderSwing;
   player.parts.armR.shoulder.rotation.x = -shoulderSwing;
@@ -1497,11 +1526,13 @@ function updatePlayer(dt) {
   player.parts.armL.shoulder.rotation.z =  0.22 + Math.abs(sinP) * 0.05 * moving;
   player.parts.armR.shoulder.rotation.z = -0.22 - Math.abs(sinP) * 0.05 * moving;
   // Elbow bends
-  player.parts.armL.elbow.rotation.x = -elbowBendL;
-  player.parts.armR.elbow.rotation.x = -elbowBendR;
-  // Wrist follows the forearm with a small counter-rotation
-  player.parts.armL.wrist.rotation.x =  elbowBendL * 0.25;
-  player.parts.armR.wrist.rotation.x =  elbowBendR * 0.25;
+  // Elbow flexes naturally (positive X rotation brings the forearm
+  // forward toward the chest, which is the correct anatomical bend)
+  player.parts.armL.elbow.rotation.x = elbowBendL;
+  player.parts.armR.elbow.rotation.x = elbowBendR;
+  // Wrist follows with a small counter-rotation
+  player.parts.armL.wrist.rotation.x = -elbowBendL * 0.25;
+  player.parts.armR.wrist.rotation.x = -elbowBendR * 0.25;
 
   // Torso counter-rotates around Y (hips go left → shoulders go right)
   player.parts.torso.rotation.y = -sinP * 0.25 * moving;
@@ -1526,9 +1557,9 @@ function updatePlayer(dt) {
     a.armR.elbow.rotation.x    = THREE.MathUtils.lerp(a.armR.elbow.rotation.x,    1.55,  0.18);
     a.armR.wrist.rotation.x    = THREE.MathUtils.lerp(a.armR.wrist.rotation.x,    0,     0.18);
     // Left arm — extended forward (like he's pointing at something ahead)
-    a.armL.shoulder.rotation.x = THREE.MathUtils.lerp(a.armL.shoulder.rotation.x, 1.1,   0.18);
-    a.armL.shoulder.rotation.z = THREE.MathUtils.lerp(a.armL.shoulder.rotation.z, 0.25,  0.18);
-    a.armL.elbow.rotation.x    = THREE.MathUtils.lerp(a.armL.elbow.rotation.x,   -0.35,  0.18);
+    a.armL.shoulder.rotation.x = THREE.MathUtils.lerp(a.armL.shoulder.rotation.x, 0.55,  0.18);
+    a.armL.shoulder.rotation.z = THREE.MathUtils.lerp(a.armL.shoulder.rotation.z, 0.3,   0.18);
+    a.armL.elbow.rotation.x    = THREE.MathUtils.lerp(a.armL.elbow.rotation.x,    0.4,   0.18);
     a.armL.wrist.rotation.x    = THREE.MathUtils.lerp(a.armL.wrist.rotation.x,    0,     0.18);
     // Breathing — subtle torso + chest expansion
     const breath = Math.sin(tSec * 2.3) * 0.02;
@@ -1554,13 +1585,17 @@ function updatePlayer(dt) {
     player.parts.legR.knee.rotation.x = 0.25;
     player.parts.legL.ankle.rotation.x = -0.1;
     player.parts.legR.ankle.rotation.x = -0.1;
-    // Arms slightly out for balance
-    player.parts.armL.shoulder.rotation.x = 0;
-    player.parts.armR.shoulder.rotation.x = 0;
-    player.parts.armL.shoulder.rotation.z =  0.55;
-    player.parts.armR.shoulder.rotation.z = -0.55;
-    player.parts.armL.elbow.rotation.x = 0;
-    player.parts.armR.elbow.rotation.x = 0;
+    // Arms stretched out WIDE like a surfer balancing, both visible
+    // against the silhouette instead of hanging down the sides.
+    player.parts.armL.shoulder.rotation.x = 0.15;
+    player.parts.armR.shoulder.rotation.x = 0.15;
+    player.parts.armL.shoulder.rotation.z =  1.25; // arm up + out to the side
+    player.parts.armR.shoulder.rotation.z = -1.25;
+    // Slight natural bend at the elbow (forward, not backward)
+    player.parts.armL.elbow.rotation.x = 0.3;
+    player.parts.armR.elbow.rotation.x = 0.3;
+    player.parts.armL.wrist.rotation.x = 0;
+    player.parts.armR.wrist.rotation.x = 0;
     player.parts.torso.rotation.x = 0;
     player.parts.torso.rotation.y = 0;
     player.parts.torso.rotation.z = 0;
@@ -1593,20 +1628,22 @@ function updatePlayer(dt) {
     const t = 1 - player.axeSwing / 0.55;
     let shoulderX, elbowX;
     if (t < 0.3) {
-      // Wind-up: rest → up-back (shoulder very negative)
+      // Wind-up: rest → up-back. Elbow flexes STRONGLY (forearm folds
+      // toward the shoulder so the axe is cocked over the head).
       const k = t / 0.3;
       shoulderX = -2.5 * k;
-      elbowX    = -1.8 * k;
+      elbowX    = 0.2 + 1.4 * k;    // 0.2 → 1.6 (flexed)
     } else if (t < 0.65) {
-      // Slam: up-back → forward-down (shoulder goes positive)
+      // Slam: up-back → forward-down. Elbow STRAIGHTENS so the axe
+      // extends fully forward/down into the target.
       const k = (t - 0.3) / 0.35;
       shoulderX = -2.5 + 4.5 * k;   // -2.5 → +2.0
-      elbowX    = -1.8 + 1.6 * k;   // -1.8 → -0.2
+      elbowX    = 1.6 - 1.4 * k;    // 1.6 → 0.2
     } else {
-      // Follow-through: forward-down → rest
+      // Follow-through: back to rest
       const k = (t - 0.65) / 0.35;
       shoulderX = 2.0 * (1 - k);
-      elbowX    = -0.2 * (1 - k);
+      elbowX    = 0.2;
     }
     player.parts.armR.shoulder.rotation.x = shoulderX;
     player.parts.armR.shoulder.rotation.z = -0.15;
@@ -2740,11 +2777,13 @@ function drawWorldMap() {
     ctx.stroke();
   }
 
-  // Player marker
+  // Player marker (same rotation convention as the minimap — negate
+  // yaw because canvas rotate is clockwise and we use meshYaw so the
+  // arrow shows the body facing direction, not the camera)
   const pX = W / 2, pY = H / 2;
   ctx.save();
   ctx.translate(pX, pY);
-  ctx.rotate(player.yaw);
+  ctx.rotate(-player.meshYaw);
   ctx.beginPath();
   ctx.moveTo(0, -10);
   ctx.lineTo(-6, 7);
@@ -2835,10 +2874,13 @@ function drawMinimap() {
     }
   }
 
-  // Player dot + direction arrow
+  // Player dot + direction arrow. Canvas rotate() is clockwise, Three.js
+  // yaw is counter-clockwise around +Y, and we want the arrow to show
+  // the body facing direction (meshYaw), not the camera yaw. Negate so
+  // the arrow always points where the lumberjack is actually looking.
   ctx.save();
   ctx.translate(cx, cy);
-  ctx.rotate(player.yaw);
+  ctx.rotate(-player.meshYaw);
   ctx.beginPath();
   ctx.moveTo(0, -7);
   ctx.lineTo(-4, 4);
