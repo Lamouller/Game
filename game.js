@@ -921,11 +921,35 @@ function buildLumberjack(group) {
   // negative z.
   // Higher subdivisions so every curve is smooth.
 
-  // --- Legs — full skeletal chain hip → knee → ankle → foot ---
-  // Upper leg (thigh), lower leg (shin) and boot are nested groups so we
-  // can bend the knee and rotate the ankle during the walk animation.
-  const thighGeo = new THREE.CapsuleGeometry(0.145, 0.24, 12, 24);
-  const shinGeo  = new THREE.CapsuleGeometry(0.12, 0.22, 12, 24);
+  // --- Legs — lathed profiles so the thigh + shin have a real taper ---
+  // Thigh: wide at the hip, narrows toward the knee. Shin: narrow at
+  // the knee, bulges at the calf, narrow at the ankle.
+  const thighProfile = [
+    new THREE.Vector2(0.00, 0.00),   // knee top
+    new THREE.Vector2(0.14, 0.02),
+    new THREE.Vector2(0.16, 0.12),   // thigh belly (fat lumberjack)
+    new THREE.Vector2(0.18, 0.22),   // widest
+    new THREE.Vector2(0.17, 0.32),
+    new THREE.Vector2(0.14, 0.40),   // hip top narrowing
+    new THREE.Vector2(0.00, 0.40),
+  ];
+  const shinProfile = [
+    new THREE.Vector2(0.00, 0.00),   // ankle bottom
+    new THREE.Vector2(0.09, 0.02),   // ankle
+    new THREE.Vector2(0.11, 0.08),
+    new THREE.Vector2(0.13, 0.18),   // calf widest
+    new THREE.Vector2(0.11, 0.28),
+    new THREE.Vector2(0.10, 0.36),
+    new THREE.Vector2(0.10, 0.40),   // knee bottom
+    new THREE.Vector2(0.00, 0.40),
+  ];
+  const thighGeo = new THREE.LatheGeometry(thighProfile, 20);
+  thighGeo.computeVertexNormals();
+  // Shift so y=0 is the TOP of the thigh (hip pivot), and the leg hangs down
+  thighGeo.translate(0, -0.40, 0);
+  const shinGeo = new THREE.LatheGeometry(shinProfile, 20);
+  shinGeo.computeVertexNormals();
+  shinGeo.translate(0, -0.40, 0);
   const bootGeo  = new THREE.IcosahedronGeometry(0.23, 3);
   const kneeCapGeo = new THREE.SphereGeometry(0.11, 14, 10);
   const bootSoleGeo = new THREE.BoxGeometry(0.3, 0.05, 0.42);
@@ -938,28 +962,27 @@ function buildLumberjack(group) {
     const hip = new THREE.Group();
     hip.position.set(x, 0.85, 0);
 
-    // Thigh mesh centered below the hip
+    // Thigh lathe — already pre-translated so y=0 is the hip pivot and
+    // y=-0.40 is the knee
     const thigh = new THREE.Mesh(thighGeo, pantsMat);
-    thigh.position.y = -0.175;
     hip.add(thigh);
 
     // Knee pivot at the bottom of the thigh
     const knee = new THREE.Group();
-    knee.position.y = -0.35;
+    knee.position.y = -0.40;
     hip.add(knee);
 
     // Kneecap — small pants-colored sphere that fills the seam when bent
     const kneeCap = new THREE.Mesh(kneeCapGeo, pantsMat);
     knee.add(kneeCap);
 
-    // Shin mesh centered below the knee
+    // Shin lathe — y=0 is the knee, y=-0.40 is the ankle
     const shin = new THREE.Mesh(shinGeo, pantsMat);
-    shin.position.y = -0.175;
     knee.add(shin);
 
     // Ankle pivot at the bottom of the shin
     const ankle = new THREE.Group();
-    ankle.position.y = -0.35;
+    ankle.position.y = -0.40;
     knee.add(ankle);
 
     // Foot (boot) + a darker flat sole underneath + 3 laces on top
@@ -982,38 +1005,32 @@ function buildLumberjack(group) {
   const legR = buildLeg( 0.14);
   group.add(legL.hip, legR.hip);
 
-  // --- Torso — capsule + chest/belly bumps to break the cylinder ---
-  // The base capsule gives the overall volume; the chest and belly
-  // bulges on the front (-Z) add the silhouette changes that make the
-  // character read as humanoid instead of sausage-shaped.
-  const torsoGeo = new THREE.CapsuleGeometry(0.34, 0.65, 12, 24);
-  const torso = new THREE.Mesh(torsoGeo, shirtMat);
-  torso.position.y = 1.25;
+  // --- Torso — single LatheGeometry with a true bedonnant profile ---
+  // Instead of stitching a capsule + chest/belly bumps together we define
+  // a 2D profile curve in (radius, y) and revolve it around the Y axis.
+  // This gives a full silhouette with hips, beer belly, chest and a
+  // tapered neck base — much less cylindrical than any capsule stack.
+  const torsoProfile = [
+    new THREE.Vector2(0.00, 0.00),  // bottom pinch (waist base)
+    new THREE.Vector2(0.30, 0.00),
+    new THREE.Vector2(0.34, 0.08),  // belt line
+    new THREE.Vector2(0.40, 0.16),  // belly starts
+    new THREE.Vector2(0.44, 0.26),  // belly widest (peak of the pot-belly)
+    new THREE.Vector2(0.42, 0.36),
+    new THREE.Vector2(0.36, 0.48),  // chest bottom
+    new THREE.Vector2(0.38, 0.58),  // pec widest
+    new THREE.Vector2(0.36, 0.68),
+    new THREE.Vector2(0.30, 0.78),  // upper chest narrowing
+    new THREE.Vector2(0.22, 0.86),  // shoulder pinch
+    new THREE.Vector2(0.18, 0.92),  // neck base
+    new THREE.Vector2(0.15, 0.95),
+    new THREE.Vector2(0.00, 0.95),  // close the top
+  ];
+  const torsoLatheGeo = new THREE.LatheGeometry(torsoProfile, 24);
+  torsoLatheGeo.computeVertexNormals();
+  const torso = new THREE.Mesh(torsoLatheGeo, shirtMat);
+  torso.position.y = 0.85; // so y=0 in the profile aligns with the belt
   group.add(torso);
-  // Chest bulge — flattened sphere at the upper front of the torso
-  const chest = new THREE.Mesh(
-    new THREE.SphereGeometry(0.28, 18, 14),
-    shirtMat,
-  );
-  chest.scale.set(1.25, 0.75, 0.85);
-  chest.position.set(0, 1.42, -0.12);
-  group.add(chest);
-  // Belly bulge — rounder, lower, bigger (lumberjack beer gut)
-  const belly = new THREE.Mesh(
-    new THREE.SphereGeometry(0.32, 18, 14),
-    shirtMat,
-  );
-  belly.scale.set(1.1, 0.8, 0.8);
-  belly.position.set(0, 1.04, -0.08);
-  group.add(belly);
-  // Upper back fill — small sphere on +Z so the back isn't flat either
-  const upperBack = new THREE.Mesh(
-    new THREE.SphereGeometry(0.28, 16, 12),
-    shirtMat,
-  );
-  upperBack.scale.set(1.15, 0.7, 0.75);
-  upperBack.position.set(0, 1.38, 0.1);
-  group.add(upperBack);
 
   // Belt (thin torus) + buckle at front (-z)
   const beltGeo = new THREE.TorusGeometry(0.35, 0.055, 12, 28);
@@ -1037,9 +1054,32 @@ function buildLumberjack(group) {
   collar.position.y = 1.62;
   group.add(collar);
 
-  // --- Arms — full skeletal chain with fingers and a shoulder pad ---
-  const upperArmGeo = new THREE.CapsuleGeometry(0.115, 0.22, 12, 24);
-  const forearmGeo  = new THREE.CapsuleGeometry(0.095, 0.2, 12, 24);
+  // --- Arms — lathed profiles so the biceps / forearm taper properly ---
+  // Upper arm: shoulder (wide) → biceps belly → elbow (narrow)
+  const upperArmProfile = [
+    new THREE.Vector2(0.00, 0.00),
+    new THREE.Vector2(0.09, 0.02),
+    new THREE.Vector2(0.11, 0.10),  // biceps belly
+    new THREE.Vector2(0.12, 0.18),  // widest
+    new THREE.Vector2(0.11, 0.26),
+    new THREE.Vector2(0.09, 0.33),  // elbow
+    new THREE.Vector2(0.00, 0.33),
+  ];
+  // Forearm: elbow (narrow) → forearm belly → wrist (narrow)
+  const forearmProfile = [
+    new THREE.Vector2(0.00, 0.00),  // wrist
+    new THREE.Vector2(0.08, 0.02),
+    new THREE.Vector2(0.10, 0.10),  // forearm belly
+    new THREE.Vector2(0.09, 0.20),
+    new THREE.Vector2(0.085, 0.30), // elbow
+    new THREE.Vector2(0.00, 0.30),
+  ];
+  const upperArmGeo = new THREE.LatheGeometry(upperArmProfile, 16);
+  upperArmGeo.computeVertexNormals();
+  upperArmGeo.translate(0, -0.33, 0);
+  const forearmGeo = new THREE.LatheGeometry(forearmProfile, 16);
+  forearmGeo.computeVertexNormals();
+  forearmGeo.translate(0, -0.30, 0);
   const palmGeo     = new THREE.SphereGeometry(0.1, 18, 14);
   const fingerGeo   = new THREE.CapsuleGeometry(0.022, 0.05, 6, 10);
   const thumbGeo    = new THREE.CapsuleGeometry(0.025, 0.04, 6, 10);
@@ -1078,9 +1118,8 @@ function buildLumberjack(group) {
     pad.scale.set(1.05, 0.7, 1.1);
     shoulder.add(pad);
 
-    // Upper arm centered below the shoulder
+    // Upper arm lathe — y=0 is the shoulder, y=-0.33 is the elbow
     const upperArm = new THREE.Mesh(upperArmGeo, shirtMat);
-    upperArm.position.y = -0.16;
     shoulder.add(upperArm);
 
     // Elbow pivot at the bottom of the upper arm
@@ -1095,14 +1134,13 @@ function buildLumberjack(group) {
     );
     elbow.add(elbowCap);
 
-    // Forearm centered below the elbow
+    // Forearm lathe — y=0 is the elbow, y=-0.30 is the wrist
     const forearm = new THREE.Mesh(forearmGeo, shirtMat);
-    forearm.position.y = -0.15;
     elbow.add(forearm);
 
     // Wrist pivot at the bottom of the forearm
     const wrist = new THREE.Group();
-    wrist.position.y = -0.32;
+    wrist.position.y = -0.30;
     elbow.add(wrist);
 
     // Hand assembly
