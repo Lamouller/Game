@@ -2707,35 +2707,60 @@ function updateInventoryPanel() {
     </div>
   `).join('');
 }
-let openPanelId = null;
-function openBigPanel(id) {
-  // Close any other open panel
-  if (openPanelId && openPanelId !== id) closeBigPanel();
-  const el = document.getElementById(id);
+// --- Side panel with tabs (inventory / map / atlas) ---
+// One sliding drawer instead of three full-screen modals, so the game
+// keeps running behind it and the player can close it instantly.
+let sideOpen = false;
+let currentSideTab = 'inventory';
+
+function updateSideTab(tab) {
+  currentSideTab = tab;
+  const panels = {
+    inventory: document.getElementById('sideTabInventory'),
+    map:       document.getElementById('sideTabMap'),
+    atlas:     document.getElementById('sideTabAtlas'),
+  };
+  for (const [name, el] of Object.entries(panels)) {
+    if (!el) continue;
+    el.classList.toggle('hidden', name !== tab);
+  }
+  for (const btn of document.querySelectorAll('.sideTab')) {
+    btn.classList.toggle('active', btn.getAttribute('data-tab') === tab);
+  }
+  // Refresh the content of the newly shown tab
+  if (tab === 'inventory') updateInventoryPanel();
+  else if (tab === 'map')  drawWorldMap();
+  else if (tab === 'atlas') updateAtlasPanel();
+}
+
+function openSidePanel(tab) {
+  const el = document.getElementById('sidePanel');
   if (!el) return;
   el.classList.remove('hidden');
-  openPanelId = id;
-  if (id === 'inventoryPanel') updateInventoryPanel();
-  if (id === 'worldMapPanel') drawWorldMap();
-  if (id === 'atlasPanel')    updateAtlasPanel();
+  sideOpen = true;
+  updateSideTab(tab || currentSideTab || 'inventory');
 }
-function closeBigPanel() {
-  if (!openPanelId) return;
-  const el = document.getElementById(openPanelId);
-  if (el) el.classList.add('hidden');
-  openPanelId = null;
+
+function closeSidePanel() {
+  const el = document.getElementById('sidePanel');
+  if (!el) return;
+  el.classList.add('hidden');
+  sideOpen = false;
 }
+
+// Back-compat names kept so other places (keydown handler) still work
+function closeBigPanel() { closeSidePanel(); }
 function toggleInventoryPanel() {
-  if (openPanelId === 'inventoryPanel') closeBigPanel();
-  else openBigPanel('inventoryPanel');
+  if (sideOpen && currentSideTab === 'inventory') closeSidePanel();
+  else openSidePanel('inventory');
 }
 function toggleWorldMapPanel() {
-  if (openPanelId === 'worldMapPanel') closeBigPanel();
-  else openBigPanel('worldMapPanel');
+  if (sideOpen && currentSideTab === 'map') closeSidePanel();
+  else openSidePanel('map');
 }
 function toggleAtlasPanel() {
-  if (openPanelId === 'atlasPanel') closeBigPanel();
-  else openBigPanel('atlasPanel');
+  if (sideOpen && currentSideTab === 'atlas') closeSidePanel();
+  else openSidePanel('atlas');
 }
 
 function updateAtlasPanel() {
@@ -2761,11 +2786,16 @@ function updateAtlasPanel() {
   }).join('');
 }
 
-// Close buttons inside big panels
+// Side panel tab buttons + close button
 document.addEventListener('click', e => {
   const t = e.target;
-  if (t && t.matches?.('.dialog-close-btn')) {
-    closeBigPanel();
+  if (!t || !t.matches) return;
+  if (t.matches('.sideTab')) {
+    updateSideTab(t.getAttribute('data-tab'));
+  } else if (t.matches('#sidePanelClose')) {
+    closeSidePanel();
+  } else if (t.matches('.dialog-close-btn')) {
+    closeSidePanel();
   }
 });
 
