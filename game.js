@@ -3157,6 +3157,12 @@ function updateAmbientChirps(dt) {
   }
 }
 
+// --- Open side panel button (visible on desktop AND mobile) ---
+document.getElementById('openPanelBtn')?.addEventListener('click', () => {
+  if (sideOpen) closeSidePanel();
+  else openSidePanel('inventory');
+});
+
 // --- Music toggle (Radio Meuh stream) ---
 const $music = document.getElementById('bgm');
 const $musicBtn = document.getElementById('musicBtn');

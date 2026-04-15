@@ -769,3 +769,14 @@ body.touch .desktop-only { display: none; }
   border-color: rgba(255, 210, 60, 0.6);
   box-shadow: 0 0 14px rgba(255, 210, 60, 0.3);
 }
+
+/* Open-side-panel button (book icon) — same shape as music button,
+   but highlighted so users see it clearly on both desktop and mobile */
+.panelBtn {
+  font-size: 19px;
+  padding: 8px 14px;
+  min-width: 46px;
+  color: #ffd23a;
+  border-color: rgba(255, 210, 60, 0.45);
+}
+.panelBtn:hover { background: rgba(255, 210, 60, 0.12); }
