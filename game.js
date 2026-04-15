@@ -290,10 +290,10 @@ const BIOMES = [
 ];
 
 function biomeAt(x, z, seed) {
-  // Higher frequency (0.0028 → 0.005) so biome regions are ~150 units wide
-  // instead of ~350 — the player encounters new biomes within a short walk.
-  const h = fbm(x * 0.0050, z * 0.0050, seed + 7001, 2);
-  const t = fbm(x * 0.0042, z * 0.0042, seed + 9103, 2);
+  // Low frequency (wavelength ~450-550 world units) so each biome region
+  // is large enough to explore — not tiny patches you cross in seconds.
+  const h = fbm(x * 0.0022, z * 0.0022, seed + 7001, 2);
+  const t = fbm(x * 0.0018, z * 0.0018, seed + 9103, 2);
   // Loosened thresholds so each biome covers a meaningful share of the map
   if (h > 0.62)             return BIOMES[1]; // cimes (snow)
   if (h > 0.50 && t > 0.55) return BIOMES[5]; // dorées (warm mid-high)
@@ -628,30 +628,124 @@ function villagePosForCell(vgx, vgz, seed) {
   };
 }
 
-function buildHouse(x, y, z, rot, rand) {
+const doorMat = new THREE.MeshLambertMaterial({ color: 0x3a2010 });
+const windowMat = new THREE.MeshStandardMaterial({ color: 0xb0d0e8, emissive: 0x334050, emissiveIntensity: 0.3, roughness: 0.2 });
+const mairieRoofMat = new THREE.MeshLambertMaterial({ color: 0x7a1e12 });
+const mairieWallMat = new THREE.MeshLambertMaterial({ color: 0xdbc59a });
+const flagMat = new THREE.MeshLambertMaterial({ color: 0x3a6bbf });
+
+function buildHouse(x, y, z, rot, rand, variant) {
+  // variant: 'cottage' (default), 'big', 'barn'
+  variant = variant || 'cottage';
   const g = new THREE.Group();
-  const w = 2.8 + rand() * 1.4;
-  const d = 2.4 + rand() * 1.2;
-  const height = 2 + rand() * 0.6;
+  let w, d, height;
+  if (variant === 'big') {
+    w = 3.8 + rand() * 0.8;
+    d = 3.2 + rand() * 0.6;
+    height = 2.6 + rand() * 0.4;
+  } else if (variant === 'barn') {
+    w = 4.5;
+    d = 2.8;
+    height = 2.2;
+  } else {
+    w = 2.6 + rand() * 1.2;
+    d = 2.2 + rand() * 1.0;
+    height = 1.9 + rand() * 0.5;
+  }
   const walls = new THREE.Mesh(new THREE.BoxGeometry(w, height, d), wallMat);
   walls.position.y = height / 2;
   g.add(walls);
-  // Door (small darker box on the front)
-  const door = new THREE.Mesh(
-    new THREE.BoxGeometry(0.7, 1.2, 0.08),
-    new THREE.MeshLambertMaterial({ color: 0x3a2010 }),
-  );
+  // Door
+  const door = new THREE.Mesh(new THREE.BoxGeometry(0.7, 1.2, 0.08), doorMat);
   door.position.set(0, 0.6, d / 2 + 0.01);
   g.add(door);
-  // Roof — pyramid (cone with 4 segments)
+  // Two front windows
+  for (const wx of [-w / 3, w / 3]) {
+    const win = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.55, 0.05), windowMat);
+    win.position.set(wx, height * 0.65, d / 2 + 0.02);
+    g.add(win);
+    const win2 = win.clone();
+    win2.position.z = -d / 2 - 0.02;
+    g.add(win2);
+  }
+  // Pyramid roof
   const roof = new THREE.Mesh(
-    new THREE.ConeGeometry(Math.max(w, d) * 0.78, 1.4, 4),
+    new THREE.ConeGeometry(Math.max(w, d) * 0.78, variant === 'barn' ? 1.0 : 1.4, 4),
     roofMat,
   );
-  roof.position.y = height + 0.7;
+  roof.position.y = height + (variant === 'barn' ? 0.5 : 0.7);
   roof.rotation.y = Math.PI / 4;
   g.add(roof);
+  // Chimney for cottage / big
+  if (variant !== 'barn') {
+    const chim = new THREE.Mesh(
+      new THREE.BoxGeometry(0.3, 0.5, 0.3),
+      new THREE.MeshLambertMaterial({ color: 0x555555 }),
+    );
+    chim.position.set(w * 0.25, height + 1.2, -d * 0.2);
+    g.add(chim);
+  }
   g.position.set(x, y, z);
+  g.rotation.y = rot;
+  return g;
+}
+
+// Mairie — the village town hall, more imposing than a regular house
+function buildMairie(x, y, z, rot) {
+  const g = new THREE.Group();
+  const w = 5.5, d = 4.5, height = 3.2;
+  // Main block in a paler stone color
+  const walls = new THREE.Mesh(new THREE.BoxGeometry(w, height, d), mairieWallMat);
+  walls.position.y = height / 2;
+  g.add(walls);
+  // Four pillars on the front porch
+  const pillarGeo = new THREE.CylinderGeometry(0.14, 0.14, height, 8);
+  const pillarMat = new THREE.MeshLambertMaterial({ color: 0xede0c0 });
+  for (const px of [-w / 2 + 0.3, -w / 6, w / 6, w / 2 - 0.3]) {
+    const p = new THREE.Mesh(pillarGeo, pillarMat);
+    p.position.set(px, height / 2, d / 2 + 0.1);
+    g.add(p);
+  }
+  // Main door (bigger than houses)
+  const door = new THREE.Mesh(new THREE.BoxGeometry(1.0, 1.8, 0.1), doorMat);
+  door.position.set(0, 0.9, d / 2 + 0.16);
+  g.add(door);
+  // Windows across the facade
+  for (const wx of [-w / 2 + 0.8, -w / 4, w / 4, w / 2 - 0.8]) {
+    const win = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.7, 0.05), windowMat);
+    win.position.set(wx, height * 0.7, d / 2 + 0.17);
+    g.add(win);
+  }
+  // Red tiled hip roof — big + wide
+  const roof = new THREE.Mesh(
+    new THREE.ConeGeometry(w * 0.75, 1.8, 4),
+    mairieRoofMat,
+  );
+  roof.position.y = height + 0.9;
+  roof.rotation.y = Math.PI / 4;
+  g.add(roof);
+  // Flagpole on the roof
+  const pole = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.04, 0.04, 2.4, 6),
+    new THREE.MeshLambertMaterial({ color: 0x888888 }),
+  );
+  pole.position.set(0, height + 3.0, 0);
+  g.add(pole);
+  // Flag (box) at the top
+  const flag = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.5, 0.04), flagMat);
+  flag.position.set(0.44, height + 3.7, 0);
+  g.add(flag);
+  g.position.set(x, y, z);
+  g.rotation.y = rot;
+  return g;
+}
+
+// Flat road strip — a dark box that sits slightly above the terrain
+// so the main street runs visibly through the village square.
+const roadMat = new THREE.MeshStandardMaterial({ color: 0x5a4a32, roughness: 0.95 });
+function buildRoad(x, y, z, length, width, rot) {
+  const g = new THREE.Mesh(new THREE.BoxGeometry(width, 0.05, length), roadMat);
+  g.position.set(x, y + 0.025, z);
   g.rotation.y = rot;
   return g;
 }
@@ -682,30 +776,120 @@ function buildWell(x, y, z) {
   return g;
 }
 
-function buildNPC(x, y, z, name, rand) {
+// NPC role variants — color + hat give different profiles
+const NPC_ROLES = {
+  villager: {
+    shirt: 0x3a7a3a,
+    pants: 0x2a2a40,
+    hat: 0x4a2810,
+    hatShape: 'cone',
+  },
+  merchant: {
+    shirt: 0x8a2a1a,
+    pants: 0x3a2a18,
+    hat: 0x222222,
+    hatShape: 'cylinder',
+  },
+  mayor: {
+    shirt: 0x1a2a5a,
+    pants: 0x1a1a2a,
+    hat: 0x1a1a1a,
+    hatShape: 'tophat',
+  },
+};
+
+function buildNPC(x, y, z, name, rand, role) {
+  role = role || 'villager';
+  const def = NPC_ROLES[role] || NPC_ROLES.villager;
+  const shirtM = new THREE.MeshLambertMaterial({ color: def.shirt });
+  const pantsM = new THREE.MeshLambertMaterial({ color: def.pants });
+  const hatM   = new THREE.MeshLambertMaterial({ color: def.hat });
+
   const g = new THREE.Group();
-  // Body (slightly shorter than the player)
+
+  // Legs — two slim cylinders
+  const legGeo = new THREE.CylinderGeometry(0.09, 0.09, 0.55, 8);
+  const legL = new THREE.Mesh(legGeo, pantsM);
+  legL.position.set(-0.09, 0.28, 0);
+  g.add(legL);
+  const legR = new THREE.Mesh(legGeo, pantsM);
+  legR.position.set(0.09, 0.28, 0);
+  g.add(legR);
+
+  // Boots — small dark boxes
+  const bootGeo = new THREE.BoxGeometry(0.2, 0.1, 0.28);
+  const bootMat = new THREE.MeshLambertMaterial({ color: 0x2a1a0a });
+  const bootL = new THREE.Mesh(bootGeo, bootMat);
+  bootL.position.set(-0.09, 0.05, 0.02);
+  g.add(bootL);
+  const bootR = new THREE.Mesh(bootGeo, bootMat);
+  bootR.position.set(0.09, 0.05, 0.02);
+  g.add(bootR);
+
+  // Torso — slightly bulkier than before
   const body = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.22, 0.24, 1.1, 8),
-    npcShirtMat,
+    new THREE.CylinderGeometry(0.22, 0.24, 0.75, 10),
+    shirtM,
   );
-  body.position.y = 0.7;
+  body.position.y = 0.95;
   g.add(body);
+
+  // Arms hanging down
+  const armGeo = new THREE.CylinderGeometry(0.07, 0.07, 0.65, 6);
+  const armL = new THREE.Mesh(armGeo, shirtM);
+  armL.position.set(-0.28, 0.95, 0);
+  armL.rotation.z = 0.1;
+  g.add(armL);
+  const armR = new THREE.Mesh(armGeo, shirtM);
+  armR.position.set(0.28, 0.95, 0);
+  armR.rotation.z = -0.1;
+  g.add(armR);
+
+  // Hands
+  const handGeo = new THREE.SphereGeometry(0.08, 10, 8);
+  const handL = new THREE.Mesh(handGeo, npcSkinMat);
+  handL.position.set(-0.30, 0.60, 0);
+  g.add(handL);
+  const handR = new THREE.Mesh(handGeo, npcSkinMat);
+  handR.position.set(0.30, 0.60, 0);
+  g.add(handR);
+
   // Head
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8), npcSkinMat);
-  head.position.y = 1.45;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 14, 10), npcSkinMat);
+  head.position.y = 1.50;
   g.add(head);
-  // Simple hat (triangle cone)
-  const hat = new THREE.Mesh(
-    new THREE.ConeGeometry(0.24, 0.3, 8),
-    new THREE.MeshLambertMaterial({ color: 0x4a2810 }),
-  );
-  hat.position.y = 1.68;
+
+  // Small eyes (front = -z)
+  const eyeGeo = new THREE.SphereGeometry(0.025, 8, 6);
+  const eyeM = new THREE.MeshStandardMaterial({ color: 0x101418 });
+  for (const ex of [-0.07, 0.07]) {
+    const eye = new THREE.Mesh(eyeGeo, eyeM);
+    eye.position.set(ex, 1.52, -0.19);
+    g.add(eye);
+  }
+
+  // Hat varies by role
+  let hat;
+  if (def.hatShape === 'tophat') {
+    const hatGroup = new THREE.Group();
+    const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 0.05, 14), hatM);
+    brim.position.y = 1.72;
+    const top = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.4, 14), hatM);
+    top.position.y = 1.94;
+    hatGroup.add(brim, top);
+    hat = hatGroup;
+  } else if (def.hatShape === 'cylinder') {
+    hat = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 0.18, 10), hatM);
+    hat.position.y = 1.8;
+  } else {
+    hat = new THREE.Mesh(new THREE.ConeGeometry(0.26, 0.3, 10), hatM);
+    hat.position.y = 1.82;
+  }
   g.add(hat);
 
   g.position.set(x, y, z);
   g.rotation.y = rand() * Math.PI * 2;
-  g.userData = { kind: 'npc', name, hasQuest: false, questId: null, offered: false };
+  g.userData = { kind: 'npc', name, role, hasQuest: false, questId: null, offered: false };
   return g;
 }
 
@@ -752,42 +936,99 @@ function buildVillage(worldX, worldZ, vgKey) {
 
   const centerY = terrainHeight(worldX, worldZ, seed, lvl);
   const group = new THREE.Group();
-  group.position.set(0, 0, 0);
+  const yawBase = rand() * Math.PI * 2;
 
-  // Central well
+  // --- Main street: a long road crossing the village N-S ---
+  const streetLen = 34;
+  const streetWidth = 2.8;
+  group.add(buildRoad(worldX, centerY, worldZ, streetLen, streetWidth, yawBase));
+  // Cross street E-W
+  const cross = buildRoad(worldX, centerY, worldZ, 22, streetWidth, yawBase + Math.PI / 2);
+  group.add(cross);
+
+  // --- Mairie at the north end of the main street ---
+  const mairieOffset = streetLen / 2 - 2.5;
+  const mx = worldX + Math.cos(yawBase + Math.PI / 2) * mairieOffset;
+  const mz = worldZ + Math.sin(yawBase + Math.PI / 2) * mairieOffset;
+  const my = terrainHeight(mx, mz, seed, lvl);
+  group.add(buildMairie(mx, my, mz, yawBase + Math.PI / 2));
+
+  // --- Central well on the square ---
   group.add(buildWell(worldX, centerY, worldZ));
 
-  // Houses arranged in a rough circle around the well
-  const nHouses = 4 + Math.floor(rand() * 3);
-  for (let i = 0; i < nHouses; i++) {
-    const angle = (i / nHouses) * Math.PI * 2 + rand() * 0.4;
-    const r = 6.5 + rand() * 3;
-    const hx = worldX + Math.cos(angle) * r;
-    const hz = worldZ + Math.sin(angle) * r;
-    const hy = terrainHeight(hx, hz, seed, lvl);
-    group.add(buildHouse(hx, hy, hz, angle + Math.PI, rand));
+  // --- Houses arranged along the main street, alternating sides ---
+  const nPairs = 3 + Math.floor(rand() * 2); // 3 or 4 pairs = 6-8 houses
+  for (let i = 0; i < nPairs; i++) {
+    const along = (i - (nPairs - 1) / 2) * 5.5;
+    const perp = 5.5;
+    // Local axes from street rotation
+    const fwdX = Math.cos(yawBase + Math.PI / 2);
+    const fwdZ = Math.sin(yawBase + Math.PI / 2);
+    const rightX = Math.cos(yawBase);
+    const rightZ = Math.sin(yawBase);
+    // House on the right of the street
+    {
+      const hx = worldX + fwdX * along + rightX * perp;
+      const hz = worldZ + fwdZ * along + rightZ * perp;
+      const hy = terrainHeight(hx, hz, seed, lvl);
+      const variant = rand() < 0.25 ? 'big' : 'cottage';
+      group.add(buildHouse(hx, hy, hz, yawBase + Math.PI, rand, variant));
+    }
+    // House on the left
+    {
+      const hx = worldX + fwdX * along - rightX * perp;
+      const hz = worldZ + fwdZ * along - rightZ * perp;
+      const hy = terrainHeight(hx, hz, seed, lvl);
+      const variant = rand() < 0.25 ? 'big' : 'cottage';
+      group.add(buildHouse(hx, hy, hz, yawBase, rand, variant));
+    }
   }
 
-  // NPCs walking (well, standing) around the square
-  const nNPCs = 2 + Math.floor(rand() * 2);
+  // --- A barn at the south end of the main street ---
+  {
+    const bx = worldX - Math.cos(yawBase + Math.PI / 2) * mairieOffset;
+    const bz = worldZ - Math.sin(yawBase + Math.PI / 2) * mairieOffset;
+    const by = terrainHeight(bx, bz, seed, lvl);
+    group.add(buildHouse(bx, by, bz, yawBase - Math.PI / 2, rand, 'barn'));
+  }
+
+  // --- NPCs: mayor near the mairie, merchant near the square, villagers walking
   const npcs = [];
-  for (let i = 0; i < nNPCs; i++) {
-    const r = 1.5 + rand() * 4;
+  // Mayor in front of the mairie (quest giver by default)
+  {
+    const mayorX = mx - Math.cos(yawBase + Math.PI / 2) * 3;
+    const mayorZ = mz - Math.sin(yawBase + Math.PI / 2) * 3;
+    const mayorY = terrainHeight(mayorX, mayorZ, seed, lvl);
+    const mayor = buildNPC(mayorX, mayorY, mayorZ, NPC_NAMES[Math.floor(rand() * NPC_NAMES.length)], rand, 'mayor');
+    mayor.userData.vgKey = vgKey;
+    mayor.userData.hasQuest = true;
+    mayor.userData.questId = pickQuestIdFor(vgKey);
+    addQuestMarker(mayor);
+    group.add(mayor);
+    npcs.push(mayor);
+  }
+  // Merchant near the well
+  {
+    const mX = worldX + (rand() - 0.5) * 3;
+    const mZ = worldZ + (rand() - 0.5) * 3 + 1.5;
+    const mY = terrainHeight(mX, mZ, seed, lvl);
+    const merchant = buildNPC(mX, mY, mZ, NPC_NAMES[Math.floor(rand() * NPC_NAMES.length)], rand, 'merchant');
+    merchant.userData.vgKey = vgKey;
+    group.add(merchant);
+    npcs.push(merchant);
+  }
+  // 2-3 villagers scattered around
+  const nVillagers = 2 + Math.floor(rand() * 2);
+  for (let i = 0; i < nVillagers; i++) {
+    const r = 2 + rand() * 6;
     const a = rand() * Math.PI * 2;
     const nx = worldX + Math.cos(a) * r;
     const nz = worldZ + Math.sin(a) * r;
     const ny = terrainHeight(nx, nz, seed, lvl);
-    const name = NPC_NAMES[Math.floor(rand() * NPC_NAMES.length)];
-    const npc = buildNPC(nx, ny, nz, name, rand);
-    npc.userData.vgKey = vgKey; // remember which village this NPC belongs to
-    // First NPC in each village offers a quest
-    if (i === 0) {
-      npc.userData.hasQuest = true;
-      npc.userData.questId = pickQuestIdFor(vgKey);
-      addQuestMarker(npc);
-    }
-    group.add(npc);
-    npcs.push(npc);
+    const villager = buildNPC(nx, ny, nz, NPC_NAMES[Math.floor(rand() * NPC_NAMES.length)], rand, 'villager');
+    villager.userData.vgKey = vgKey;
+    group.add(villager);
+    npcs.push(villager);
   }
 
   worldGroup.add(group);
@@ -1913,6 +2154,10 @@ if (!save.discoveredVillages) save.discoveredVillages = {};
 if (!save.species) save.species = {};
 // Per-village reputation (vgKey -> { rep })
 if (!save.villageRep) save.villageRep = {};
+// Fog of war — which coarse "exploration tiles" the player has walked over
+// Keys are "ex,ez" where ex = floor(worldX / FOG_TILE_SIZE). Value is truthy.
+if (!save.exploredTiles) save.exploredTiles = {};
+const FOG_TILE_SIZE = 24; // world units per fog cell
 
 function acceptQuest(tmpl, fromNpc) {
   if (save.activeQuests.some(q => q.id === tmpl.id)) return false;
@@ -2531,6 +2776,10 @@ const $dialogTrade  = document.getElementById('dialogTrade');
 const $dialogClose  = document.getElementById('dialogClose');
 const $interactPrompt = document.getElementById('interactPrompt');
 const $miniCanvas   = document.getElementById('minimap');
+// Clicking the minimap opens the full world map in the side panel
+$miniCanvas?.addEventListener('click', () => {
+  if (typeof openSidePanel === 'function') openSidePanel('map');
+});
 const $miniCtx      = $miniCanvas ? $miniCanvas.getContext('2d') : null;
 
 // --- Quest tracker panel ------------------------------------------------
@@ -2814,18 +3063,20 @@ function drawWorldMap() {
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, W, H);
 
-  // Low-res terrain height shading sampled around the player
-  const step = 10;
+  // Biome + relief tinting, per explored tile. Unexplored tiles stay
+  // in the dark background gradient (fog of war).
+  const step = 8;
+  const wmBiome = new THREE.Color();
   for (let y = 0; y < H; y += step) {
     for (let x = 0; x < W; x += step) {
       const wx = player.pos.x + ((x - W / 2) / (W / 2)) * WORLD_MAP_RANGE;
       const wz = player.pos.z + ((y - H / 2) / (H / 2)) * WORLD_MAP_RANGE;
+      if (!isTileExplored(wx, wz)) continue;
       const b = biomeAt(wx, wz, save.worldSeed);
       const h = terrainHeight(wx, wz, save.worldSeed, worldLevel());
-      // Base biome fog color, darkened by relief
-      const bc = new THREE.Color(b.fog);
-      const k = 0.35 + Math.max(-0.25, Math.min(0.25, h / 40)) * 0.8;
-      ctx.fillStyle = `rgb(${(bc.r*255*k)|0},${(bc.g*255*k)|0},${(bc.b*255*k)|0})`;
+      wmBiome.set(b.fog);
+      const k = 0.45 + Math.max(-0.25, Math.min(0.35, h / 40)) * 0.8;
+      ctx.fillStyle = `rgb(${(wmBiome.r*255*k)|0},${(wmBiome.g*255*k)|0},${(wmBiome.b*255*k)|0})`;
       ctx.fillRect(x, y, step, step);
     }
   }
@@ -2872,6 +3123,27 @@ function drawWorldMap() {
 }
 
 // Mark a village as discovered when the player walks within range of it.
+// Mark the fog tile under the player's feet and a small radius around
+// them as explored. Called every frame from the main loop.
+const FOG_REVEAL_RADIUS = 2; // tiles revealed around the player
+function updateExploredTiles() {
+  const px = Math.floor(player.pos.x / FOG_TILE_SIZE);
+  const pz = Math.floor(player.pos.z / FOG_TILE_SIZE);
+  for (let dz = -FOG_REVEAL_RADIUS; dz <= FOG_REVEAL_RADIUS; dz++) {
+    for (let dx = -FOG_REVEAL_RADIUS; dx <= FOG_REVEAL_RADIUS; dx++) {
+      const d2 = dx * dx + dz * dz;
+      if (d2 > FOG_REVEAL_RADIUS * FOG_REVEAL_RADIUS) continue;
+      const k = (px + dx) + ',' + (pz + dz);
+      if (!save.exploredTiles[k]) save.exploredTiles[k] = 1;
+    }
+  }
+}
+function isTileExplored(worldX, worldZ) {
+  const ex = Math.floor(worldX / FOG_TILE_SIZE);
+  const ez = Math.floor(worldZ / FOG_TILE_SIZE);
+  return !!save.exploredTiles[ex + ',' + ez];
+}
+
 function updateVillageDiscovery() {
   for (const [key, v] of villages) {
     if (!v) continue;
@@ -2901,24 +3173,28 @@ function drawMinimap() {
   ctx.arc(cx, cy, R, 0, Math.PI * 2);
   ctx.clip();
 
-  // Background tinted by current biome
-  const b = biomeAt(player.pos.x, player.pos.z, save.worldSeed);
-  ctx.fillStyle = '#' + b.fog.toString(16).padStart(6, '0');
+  // Fill with dark "fog" — unexplored pixels stay this color
+  ctx.fillStyle = '#0b1422';
   ctx.fillRect(0, 0, W, H);
 
-  // Terrain relief shading (low-res grid)
+  // Sample biome + terrain per pixel. Only draw where the tile is
+  // explored (fog of war); keep the base dark fill everywhere else.
   const step = 6;
+  const tmpBiome = new THREE.Color();
   for (let y = 0; y < H; y += step) {
     for (let x = 0; x < W; x += step) {
       const wx = player.pos.x + ((x - cx) / R) * MINIMAP_RANGE;
       const wz = player.pos.z + ((y - cy) / R) * MINIMAP_RANGE;
+      if (!isTileExplored(wx, wz)) continue;
+      const b = biomeAt(wx, wz, save.worldSeed);
+      tmpBiome.set(b.fog);
       const h = terrainHeight(wx, wz, save.worldSeed, worldLevel());
-      const tint = Math.max(-0.3, Math.min(0.3, h / 50));
-      if (tint > 0) {
-        ctx.fillStyle = `rgba(255,255,255,${tint * 0.7})`;
-      } else {
-        ctx.fillStyle = `rgba(0,0,0,${-tint * 0.7})`;
-      }
+      // Shade darker below sea, brighter for hills
+      const shade = 0.5 + Math.max(-0.25, Math.min(0.4, h / 35));
+      const r = Math.min(255, (tmpBiome.r * 255 * shade) | 0);
+      const g = Math.min(255, (tmpBiome.g * 255 * shade) | 0);
+      const b2 = Math.min(255, (tmpBiome.b * 255 * shade) | 0);
+      ctx.fillStyle = 'rgb(' + r + ',' + g + ',' + b2 + ')';
       ctx.fillRect(x, y, step, step);
     }
   }
@@ -3067,10 +3343,12 @@ $reset.addEventListener('click', () => {
   save = defaultSave();
   save.activeQuests = [];
   save.completedQuests = [];
-  save.inventory = { bois: 0, herbe: 0, baie: 0, nectar: 0, essence: 0, plume: 0 };
+  save.inventory = { bois: 0, herbe: 0, baie: 0, nectar: 0, essence: 0, plume: 0, graine: 0 };
   save.discoveredVillages = {};
   save.species = {};
   save.villageRep = {};
+  save.exploredTiles = {};
+  save.choppedTrees = {};
   persist();
   birds.length = 0;
   for (const f of foods) { scene.remove(f.mesh); f.mesh.material.dispose(); }
@@ -3421,6 +3699,7 @@ function loop() {
   try { updateInteraction(); }    catch (e) { logOnce('updateInteraction', e); }
   try { updateQuestDistances(); } catch (e) { logOnce('updateQuestDistances', e); }
   try { updateVillageDiscovery(); } catch (e) { logOnce('updateVillageDiscovery', e); }
+  try { updateExploredTiles(); }    catch (e) { logOnce('updateExploredTiles', e); }
   try { updateAmbientChirps(dt); }  catch (e) { logOnce('updateAmbientChirps', e); }
 
   // Occasional spawn if population is low and xp allows
