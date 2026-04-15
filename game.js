@@ -3011,13 +3011,16 @@ function gainXp(amount) {
       buildFoodbar();
     }
   }
-  // Check world level up
+  // Check world level up — do NOT rebuild the world, just show a toast.
+  // Destroying the chunks/villages/plants on every level-up used to wipe
+  // everything the player had discovered / grown, which broke the flow.
+  // Chunks that stream in AFTER the level-up will naturally pick up the
+  // higher worldLevel() and add their extra detail — the transition is
+  // seamless at the edge of the currently loaded world.
   const lv = worldLevel();
   if (lv !== lastLevel) {
     lastLevel = lv;
     showToast(`Le monde évolue — <b>niveau ${lv}</b>`);
-    buildWorld();
-    placePlayerOnGround();
   }
   persist();
   updateHUD();
