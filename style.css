@@ -781,5 +781,22 @@ body.touch .desktop-only { display: none; }
   min-width: 46px;
   color: #ffd23a;
   border-color: rgba(255, 210, 60, 0.45);
+  position: relative;
 }
 .panelBtn:hover { background: rgba(255, 210, 60, 0.12); }
+.panelBtn .keyBadge {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  background: #ffd23a;
+  color: #222;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 2px 5px;
+  border-radius: 6px;
+  border: 1px solid #3a2a10;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+  line-height: 1;
+}
+/* Hide the key badge on touch devices since it's only keyboard-relevant */
+body.touch .panelBtn .keyBadge { display: none; }

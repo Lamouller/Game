@@ -108,6 +108,11 @@ window.addEventListener('keydown', e => {
   if (e.code === 'KeyI' && typeof toggleInventoryPanel === 'function') toggleInventoryPanel();
   if (e.code === 'KeyM' && typeof toggleWorldMapPanel === 'function') toggleWorldMapPanel();
   if (e.code === 'KeyA' && typeof toggleAtlasPanel === 'function') toggleAtlasPanel();
+  // Tab also toggles the side panel (prevents focus jumping to browser UI)
+  if (e.code === 'Tab' && typeof toggleInventoryPanel === 'function') {
+    e.preventDefault();
+    toggleInventoryPanel();
+  }
 });
 window.addEventListener('keyup', e => { keys[e.code] = false; });
 window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
@@ -927,6 +932,10 @@ function addTurnInMarker(npcGroup) {
   npcGroup.userData.questMarker = marker;
 }
 
+// Fully procedural village generator. Each village picks one of four
+// layouts, a variable size, and a variable number of houses, all driven
+// by the mulberry32 seeded on the village grid key. Revisits produce
+// the exact same village.
 function buildVillage(worldX, worldZ, vgKey) {
   const seed = save.worldSeed;
   const lvl  = worldLevel();
@@ -934,93 +943,166 @@ function buildVillage(worldX, worldZ, vgKey) {
     (vgKey.charCodeAt(0) * 1000003) ^ (seed * 2654435761) ^ vgKey.length,
   );
 
-  const centerY = terrainHeight(worldX, worldZ, seed, lvl);
   const group = new THREE.Group();
+  const centerY = terrainHeight(worldX, worldZ, seed, lvl);
   const yawBase = rand() * Math.PI * 2;
+  // Size multiplier between 0.8 (small hamlet) and 1.55 (big village)
+  const sizeMul = 0.8 + rand() * 0.75;
+  // Layout type: 0=linear, 1=cross, 2=L-shape, 3=round/cluster
+  const layoutType = Math.floor(rand() * 4);
 
-  // --- Main street: a long road crossing the village N-S ---
-  const streetLen = 34;
-  const streetWidth = 2.8;
-  group.add(buildRoad(worldX, centerY, worldZ, streetLen, streetWidth, yawBase));
-  // Cross street E-W
-  const cross = buildRoad(worldX, centerY, worldZ, 22, streetWidth, yawBase + Math.PI / 2);
-  group.add(cross);
+  // --- Helpers for this village ---
+  const slots = []; // { x, z, rot } — house placement slots
+  const roads = []; // { x, z, len, rot, width }
 
-  // --- Mairie at the north end of the main street ---
-  const mairieOffset = streetLen / 2 - 2.5;
-  const mx = worldX + Math.cos(yawBase + Math.PI / 2) * mairieOffset;
-  const mz = worldZ + Math.sin(yawBase + Math.PI / 2) * mairieOffset;
-  const my = terrainHeight(mx, mz, seed, lvl);
-  group.add(buildMairie(mx, my, mz, yawBase + Math.PI / 2));
+  const baseStreetW = 2.8;
+  const houseSpacing = 5.2;
 
-  // --- Central well on the square ---
+  // Axes aligned with village rotation
+  const fwdX  = Math.cos(yawBase + Math.PI / 2);
+  const fwdZ  = Math.sin(yawBase + Math.PI / 2);
+  const sideX = Math.cos(yawBase);
+  const sideZ = Math.sin(yawBase);
+
+  // --- Layout generation ---
+  if (layoutType === 0) {
+    // LINEAR: single long street, houses both sides, mairie at one end,
+    // barn at the other. Variable length.
+    const nPairs = 3 + Math.floor(rand() * 4); // 3-6 pairs = 6-12 houses
+    const streetLen = Math.min(60, (nPairs * houseSpacing + 8) * sizeMul);
+    roads.push({ x: worldX, z: worldZ, len: streetLen, rot: yawBase, width: baseStreetW });
+    for (let i = 0; i < nPairs; i++) {
+      const along = (i - (nPairs - 1) / 2) * houseSpacing * sizeMul;
+      const perp  = 5.5 * sizeMul;
+      slots.push({ x: worldX + fwdX * along + sideX * perp, z: worldZ + fwdZ * along + sideZ * perp, rot: yawBase + Math.PI });
+      slots.push({ x: worldX + fwdX * along - sideX * perp, z: worldZ + fwdZ * along - sideZ * perp, rot: yawBase });
+    }
+    // Mairie at the +fwd end
+    const mairieDist = (streetLen / 2) - 2.5;
+    slots.mairie = { x: worldX + fwdX * mairieDist, z: worldZ + fwdZ * mairieDist, rot: yawBase + Math.PI / 2 };
+    // Barn at the opposite end
+    slots.barn = { x: worldX - fwdX * mairieDist, z: worldZ - fwdZ * mairieDist, rot: yawBase - Math.PI / 2 };
+  } else if (layoutType === 1) {
+    // CROSS: main + perpendicular street, houses in each quadrant
+    const nAlong = 2 + Math.floor(rand() * 3); // 2-4 pairs per arm
+    const armLen = Math.min(55, (nAlong * houseSpacing + 10) * sizeMul);
+    roads.push({ x: worldX, z: worldZ, len: armLen, rot: yawBase, width: baseStreetW });
+    roads.push({ x: worldX, z: worldZ, len: armLen, rot: yawBase + Math.PI / 2, width: baseStreetW });
+    for (let i = 1; i <= nAlong; i++) {
+      const along = i * houseSpacing * sizeMul;
+      const perp = 5.0 * sizeMul;
+      // North arm
+      slots.push({ x: worldX + fwdX * along + sideX * perp, z: worldZ + fwdZ * along + sideZ * perp, rot: yawBase + Math.PI });
+      slots.push({ x: worldX + fwdX * along - sideX * perp, z: worldZ + fwdZ * along - sideZ * perp, rot: yawBase });
+      // South arm
+      slots.push({ x: worldX - fwdX * along + sideX * perp, z: worldZ - fwdZ * along + sideZ * perp, rot: yawBase + Math.PI });
+      slots.push({ x: worldX - fwdX * along - sideX * perp, z: worldZ - fwdZ * along - sideZ * perp, rot: yawBase });
+    }
+    slots.mairie = { x: worldX + sideX * (armLen / 2 - 3), z: worldZ + sideZ * (armLen / 2 - 3), rot: yawBase };
+    slots.barn   = { x: worldX - sideX * (armLen / 2 - 3), z: worldZ - sideZ * (armLen / 2 - 3), rot: yawBase + Math.PI };
+  } else if (layoutType === 2) {
+    // L-SHAPE: main street + perpendicular branch from one end
+    const mainLen = (22 + rand() * 12) * sizeMul;
+    const branchLen = (14 + rand() * 10) * sizeMul;
+    roads.push({ x: worldX, z: worldZ, len: mainLen, rot: yawBase, width: baseStreetW });
+    // Branch starts at the +fwd end of the main street
+    const branchCX = worldX + fwdX * (mainLen / 2 - 2);
+    const branchCZ = worldZ + fwdZ * (mainLen / 2 - 2);
+    roads.push({ x: branchCX + sideX * (branchLen / 2 - 2), z: branchCZ + sideZ * (branchLen / 2 - 2), len: branchLen, rot: yawBase + Math.PI / 2, width: baseStreetW });
+    // Houses along main street
+    const nPairs = 2 + Math.floor(rand() * 3);
+    for (let i = 0; i < nPairs; i++) {
+      const along = (i - (nPairs - 1) / 2) * houseSpacing * sizeMul;
+      const perp = 5.0 * sizeMul;
+      slots.push({ x: worldX + fwdX * along + sideX * perp, z: worldZ + fwdZ * along + sideZ * perp, rot: yawBase + Math.PI });
+      slots.push({ x: worldX + fwdX * along - sideX * perp, z: worldZ + fwdZ * along - sideZ * perp, rot: yawBase });
+    }
+    // Houses along the branch (one side only = hill side)
+    const nBranch = 2 + Math.floor(rand() * 2);
+    for (let i = 1; i <= nBranch; i++) {
+      const d = i * houseSpacing * sizeMul;
+      slots.push({ x: branchCX + sideX * d + fwdX * 5.0 * sizeMul, z: branchCZ + sideZ * d + fwdZ * 5.0 * sizeMul, rot: yawBase + Math.PI });
+    }
+    slots.mairie = { x: branchCX + sideX * branchLen * 0.4, z: branchCZ + sideZ * branchLen * 0.4, rot: yawBase + Math.PI / 2 };
+    slots.barn   = { x: worldX - fwdX * (mainLen / 2 - 2), z: worldZ - fwdZ * (mainLen / 2 - 2), rot: yawBase - Math.PI / 2 };
+  } else {
+    // ROUND / CLUSTER: houses in an irregular ring around a central
+    // square, mairie on the ring, no real "street" — just a short path
+    // from the square outward.
+    const ringR = (7 + rand() * 4) * sizeMul;
+    const nHouses = 6 + Math.floor(rand() * 6); // 6-11 houses
+    for (let i = 0; i < nHouses; i++) {
+      const a = (i / nHouses) * Math.PI * 2 + rand() * 0.35;
+      const r = ringR * (0.9 + rand() * 0.3);
+      slots.push({
+        x: worldX + Math.cos(a) * r,
+        z: worldZ + Math.sin(a) * r,
+        rot: a + Math.PI,
+      });
+    }
+    // Mairie slightly off the ring, pointing toward the center
+    const ma = rand() * Math.PI * 2;
+    slots.mairie = { x: worldX + Math.cos(ma) * (ringR + 4), z: worldZ + Math.sin(ma) * (ringR + 4), rot: ma + Math.PI };
+    slots.barn = null; // no barn in round villages
+    // A small radial path from the center toward the mairie
+    roads.push({ x: worldX + Math.cos(ma) * (ringR / 2 + 1), z: worldZ + Math.sin(ma) * (ringR / 2 + 1), len: ringR + 4, rot: ma + Math.PI / 2, width: 2.2 });
+  }
+
+  // --- Build roads ---
+  for (const r of roads) {
+    const ry = terrainHeight(r.x, r.z, seed, lvl);
+    group.add(buildRoad(r.x, ry, r.z, r.len, r.width, r.rot));
+  }
+
+  // --- Build mairie ---
+  if (slots.mairie) {
+    const my2 = terrainHeight(slots.mairie.x, slots.mairie.z, seed, lvl);
+    group.add(buildMairie(slots.mairie.x, my2, slots.mairie.z, slots.mairie.rot));
+  }
+
+  // --- Build barn (if any) ---
+  if (slots.barn) {
+    const by = terrainHeight(slots.barn.x, slots.barn.z, seed, lvl);
+    group.add(buildHouse(slots.barn.x, by, slots.barn.z, slots.barn.rot, rand, 'barn'));
+  }
+
+  // --- Central well ---
   group.add(buildWell(worldX, centerY, worldZ));
 
-  // --- Houses arranged along the main street, alternating sides ---
-  const nPairs = 3 + Math.floor(rand() * 2); // 3 or 4 pairs = 6-8 houses
-  for (let i = 0; i < nPairs; i++) {
-    const along = (i - (nPairs - 1) / 2) * 5.5;
-    const perp = 5.5;
-    // Local axes from street rotation
-    const fwdX = Math.cos(yawBase + Math.PI / 2);
-    const fwdZ = Math.sin(yawBase + Math.PI / 2);
-    const rightX = Math.cos(yawBase);
-    const rightZ = Math.sin(yawBase);
-    // House on the right of the street
-    {
-      const hx = worldX + fwdX * along + rightX * perp;
-      const hz = worldZ + fwdZ * along + rightZ * perp;
-      const hy = terrainHeight(hx, hz, seed, lvl);
-      const variant = rand() < 0.25 ? 'big' : 'cottage';
-      group.add(buildHouse(hx, hy, hz, yawBase + Math.PI, rand, variant));
-    }
-    // House on the left
-    {
-      const hx = worldX + fwdX * along - rightX * perp;
-      const hz = worldZ + fwdZ * along - rightZ * perp;
-      const hy = terrainHeight(hx, hz, seed, lvl);
-      const variant = rand() < 0.25 ? 'big' : 'cottage';
-      group.add(buildHouse(hx, hy, hz, yawBase, rand, variant));
-    }
+  // --- Regular houses ---
+  for (const s of slots) {
+    const hy = terrainHeight(s.x, s.z, seed, lvl);
+    const roll = rand();
+    const variant = roll < 0.2 ? 'big' : 'cottage';
+    group.add(buildHouse(s.x, hy, s.z, s.rot, rand, variant));
   }
 
-  // --- A barn at the south end of the main street ---
-  {
-    const bx = worldX - Math.cos(yawBase + Math.PI / 2) * mairieOffset;
-    const bz = worldZ - Math.sin(yawBase + Math.PI / 2) * mairieOffset;
-    const by = terrainHeight(bx, bz, seed, lvl);
-    group.add(buildHouse(bx, by, bz, yawBase - Math.PI / 2, rand, 'barn'));
-  }
-
-  // --- NPCs: mayor near the mairie, merchant near the square, villagers walking
+  // --- NPCs ---
   const npcs = [];
-  // Mayor in front of the mairie (quest giver by default)
-  {
-    const mayorX = mx - Math.cos(yawBase + Math.PI / 2) * 3;
-    const mayorZ = mz - Math.sin(yawBase + Math.PI / 2) * 3;
-    const mayorY = terrainHeight(mayorX, mayorZ, seed, lvl);
-    const mayor = buildNPC(mayorX, mayorY, mayorZ, NPC_NAMES[Math.floor(rand() * NPC_NAMES.length)], rand, 'mayor');
-    mayor.userData.vgKey = vgKey;
-    mayor.userData.hasQuest = true;
-    mayor.userData.questId = pickQuestIdFor(vgKey);
-    addQuestMarker(mayor);
-    group.add(mayor);
-    npcs.push(mayor);
-  }
-  // Merchant near the well
-  {
-    const mX = worldX + (rand() - 0.5) * 3;
-    const mZ = worldZ + (rand() - 0.5) * 3 + 1.5;
-    const mY = terrainHeight(mX, mZ, seed, lvl);
-    const merchant = buildNPC(mX, mY, mZ, NPC_NAMES[Math.floor(rand() * NPC_NAMES.length)], rand, 'merchant');
-    merchant.userData.vgKey = vgKey;
-    group.add(merchant);
-    npcs.push(merchant);
-  }
-  // 2-3 villagers scattered around
-  const nVillagers = 2 + Math.floor(rand() * 2);
+  // Mayor in front of the mairie (or at the square if no mairie)
+  const mBase = slots.mairie || { x: worldX, z: worldZ, rot: yawBase };
+  const mayorX = mBase.x - Math.cos(mBase.rot) * 2.5;
+  const mayorZ = mBase.z - Math.sin(mBase.rot) * 2.5;
+  const mayorY = terrainHeight(mayorX, mayorZ, seed, lvl);
+  const mayor = buildNPC(mayorX, mayorY, mayorZ, NPC_NAMES[Math.floor(rand() * NPC_NAMES.length)], rand, 'mayor');
+  mayor.userData.vgKey = vgKey;
+  mayor.userData.hasQuest = true;
+  mayor.userData.questId = pickQuestIdFor(vgKey);
+  addQuestMarker(mayor);
+  group.add(mayor);
+  npcs.push(mayor);
+  // Merchant near the well (always at the center)
+  const merchantX = worldX + (rand() - 0.5) * 2.5;
+  const merchantZ = worldZ + (rand() - 0.5) * 2.5 + 2;
+  const merchantY = terrainHeight(merchantX, merchantZ, seed, lvl);
+  const merchant = buildNPC(merchantX, merchantY, merchantZ, NPC_NAMES[Math.floor(rand() * NPC_NAMES.length)], rand, 'merchant');
+  merchant.userData.vgKey = vgKey;
+  group.add(merchant);
+  npcs.push(merchant);
+  // 2-4 villagers walking around, density scales with village size
+  const nVillagers = 2 + Math.floor(rand() * 3 * sizeMul);
   for (let i = 0; i < nVillagers; i++) {
-    const r = 2 + rand() * 6;
+    const r = 2 + rand() * 7 * sizeMul;
     const a = rand() * Math.PI * 2;
     const nx = worldX + Math.cos(a) * r;
     const nz = worldZ + Math.sin(a) * r;
@@ -1032,7 +1114,7 @@ function buildVillage(worldX, worldZ, vgKey) {
   }
 
   worldGroup.add(group);
-  return { group, worldX, worldZ, npcs, key: vgKey };
+  return { group, worldX, worldZ, npcs, key: vgKey, layoutType, sizeMul };
 }
 
 function disposeVillage(v) {
